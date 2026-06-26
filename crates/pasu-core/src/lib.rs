@@ -1,21 +1,21 @@
-//! pasu-core — 공통 타입과 레이어/룰엔진 인터페이스(trait).
+//! pasu-core — shared types and the layer / rule-engine interfaces (traits).
 //!
-//! 구현(Falco, eBPF, socket)은 전부 이 trait 뒤에 둔다. 이 crate는 아무것도
-//! 의존하지 않는다(순수). 다른 crate는 core만 의존한다(acyclic).
-//! 설계: docs/repo-structure.md
+//! Implementations (Falco, eBPF, socket) all live behind these traits. This
+//! crate depends on nothing (pure); other crates depend only on core (acyclic).
+//! Design: docs/repo-structure.md
 
-/// 정책 판정 결과.
+/// A policy decision.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Verdict {
-    /// 허용.
+    /// Allow.
     Allow,
-    /// 차단 + 이유.
+    /// Block, with a reason.
     Deny(String),
-    /// 사용자 확인 요청 + 이유.
+    /// Ask the user for confirmation, with a reason.
     Ask(String),
 }
 
-/// 에이전트가 하려는 행위. 레이어는 이 이벤트를 평가한다.
+/// An action the agent wants to take. Layers evaluate this event.
 #[derive(Debug, Clone)]
 pub struct Event {
     pub kind: EventKind,
@@ -23,19 +23,19 @@ pub struct Event {
 
 #[derive(Debug, Clone)]
 pub enum EventKind {
-    /// L1 — tool call.
+    /// tool gate — a tool call.
     ToolCall { name: String, input: String },
-    /// L2/L3 — 나가는 네트워크.
+    /// egress proxy / eBPF — outbound network.
     Egress { host: String, port: u16 },
 }
 
-/// 룰 엔진 인터페이스. 초기 구현은 Falco 룰 차용(pasu-rules).
-/// 나중에 OPA / 자체 DSL로 교체 가능 — 호출부는 이 trait만 본다.
+/// Rule engine interface. The initial implementation borrows Falco rules
+/// (pasu-rules). Swappable later for OPA / a custom DSL — callers see only this trait.
 pub trait RuleEngine {
     fn evaluate(&self, event: &Event) -> Verdict;
 }
 
-/// 레이어(L1/L2/L3) 공통 인터페이스. 런타임에 토글 가능.
+/// Common interface for layers (tool gate / egress proxy / eBPF). Runtime-toggleable.
 pub trait Layer {
     fn name(&self) -> &str;
     fn enabled(&self) -> bool;
@@ -43,8 +43,8 @@ pub trait Layer {
 }
 
 impl Verdict {
-    /// 더 제한적인 verdict로 에스컬레이션: deny > ask > allow.
-    /// 여러 레이어/룰이 매칭될 때 가장 강한 차단을 택한다.
+    /// Escalate to the more restrictive verdict: deny > ask > allow.
+    /// When several layers/rules match, pick the strongest block.
     pub fn escalate(self, other: Verdict) -> Verdict {
         match (&self, &other) {
             (Verdict::Deny(_), _) => self,

@@ -1,20 +1,20 @@
 ---
 name: Bug Report
-about: Pasu 사용 중 발견한 버그
+about: A bug found while using Pasu
 labels: kind/bug
 ---
 
-**무엇이 일어났나**:
+**What happened**:
 
-**기대한 동작**:
+**Expected behavior**:
 
-**재현 절차 (최소·정확하게)**:
+**Steps to reproduce (minimal, precise)**:
 
-**환경**:
-- Pasu 버전:
-- OS / 아키텍처:
-- **커널 버전** (L3/eBPF 관련 시 필수):
-- 활성 레이어 (L1/L2/L3 on-off):
-- 룰셋 버전:
+**Environment**:
+- Pasu version:
+- OS / architecture:
+- **Kernel version** (required for eBPF issues):
+- Active layers (toolgate / egress / ebpf on-off):
+- Ruleset version:
 
-**그 외**:
+**Anything else**:
