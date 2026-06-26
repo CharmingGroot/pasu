@@ -1,0 +1,20 @@
+[workspace]
+resolver = "2"
+members = [
+    "crates/pasu-core",
+    "crates/pasu-l1",
+    # 단계적 추가 (설계: docs/repo-structure.md):
+    # "crates/pasu-rules",   # RuleEngine 구현 (Falco 차용)
+    # "crates/pasu-l2",      # egress proxy
+    # "crates/pasu-l3",      # eBPF (Linux)
+    # "crates/pasu-daemon",  # 노드 데몬 (L2+L3)
+    # "crates/pasu-sdk",     # L1 임베드 라이브러리
+]
+
+[workspace.package]
+edition = "2021"
+license = "Apache-2.0"
+repository = "https://github.com/CharmingGroot/pasu"
+
+[workspace.dependencies]
+serde = { version = "1", features = ["derive"] }
