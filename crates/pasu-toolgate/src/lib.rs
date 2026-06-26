@@ -1,4 +1,4 @@
-//! pasu-l1 — tool call gate.
+//! pasu-toolgate — tool call gate.
 //!
 //! 에이전트가 tool을 실행하기 전에 선언을 검사해 사전 차단(cooperative).
 //! `RuleEngine`으로 평가하고 `Layer` trait을 구현한다.
