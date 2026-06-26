@@ -2,13 +2,13 @@
 resolver = "2"
 members = [
     "crates/pasu-core",
-    "crates/pasu-l1",
+    "crates/pasu-toolgate",
     # 단계적 추가 (설계: docs/repo-structure.md):
-    # "crates/pasu-rules",   # RuleEngine 구현 (Falco 차용)
-    # "crates/pasu-l2",      # egress proxy
-    # "crates/pasu-l3",      # eBPF (Linux)
-    # "crates/pasu-daemon",  # 노드 데몬 (L2+L3)
-    # "crates/pasu-sdk",     # L1 임베드 라이브러리
+    # "crates/pasu-rules",    # RuleEngine 구현 (Falco 차용)
+    # "crates/pasu-egress",   # egress proxy (OSI L7)
+    # "crates/pasu-ebpf",     # eBPF (OSI L3/L4, Linux)
+    # "crates/pasu-daemon",   # 노드 데몬 (egress + ebpf)
+    # "crates/pasu-sdk",      # tool gate 임베드 라이브러리
 ]
 
 [workspace.package]

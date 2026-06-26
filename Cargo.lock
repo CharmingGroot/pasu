@@ -10,7 +10,7 @@ dependencies = [
 ]
 
 [[package]]
-name = "pasu-l1"
+name = "pasu-toolgate"
 version = "0.0.0"
 dependencies = [
  "pasu-core",
