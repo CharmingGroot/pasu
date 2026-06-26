@@ -1,73 +1,73 @@
-# CLAUDE.md — Pasu 개발 작업 룰
+# CLAUDE.md — Pasu Development Rules
 
-이 파일은 Pasu에서 작업하는 Claude(및 기여자)가 **반드시 지켜야 하는** 룰이다.
-이 룰은 기본 동작보다 우선한다.
+This file defines rules that Claude (and contributors) **must follow** when working in Pasu.
+These rules take precedence over default behavior.
 
-## 프로젝트
+## Project
 
-Pasu = Rust 기반 AI 에이전트 보안 가드. 에이전트의 **tool call + egress** 를 다층으로 **강제 차단**한다. cooperative(선언만 봄)가 아니라 **enforcing**(실제 차단)이 핵심 차별화.
+Pasu is a Rust security guard for AI agents. It enforces hard blocks on an agent's **tool calls and egress** across multiple layers. The differentiator is **enforcing** (actually blocks) rather than cooperative (only sees what is declared).
 
-레이어는 OSI 관용 표기를 따른다 (깊을수록 낮은 OSI 레벨):
+Layers follow OSI convention (deeper = lower OSI level):
 
-| 레이어 | OSI | crate |
-|--------|-----|-------|
-| eBPF | L3/L4 (커널) | `pasu-ebpf` |
-| egress proxy | L7 (응용) | `pasu-egress` |
-| tool gate | 앱 (OSI 위) | `pasu-toolgate` |
+| Layer | OSI | crate |
+|-------|-----|-------|
+| eBPF | L3/L4 (kernel) | `pasu-ebpf` |
+| egress proxy | L7 (application) | `pasu-egress` |
+| tool gate | app (above OSI) | `pasu-toolgate` |
 
-상세 설계는 `docs/`에 정리한다 (architecture · repo-structure · rules · testing; 작성 중).
-**작업 전 관련 설계 문서를 먼저 읽는다.**
+Detailed design lives in `docs/` (architecture · repo-structure · rules · testing; in progress).
+**Read the relevant design doc before starting work.**
 
 ---
 
-## 절대 작업 룰 (위반 시 멈추고 보고)
+## Hard Rules (stop and report if violated)
 
-### 1. 아키텍처 — 분리/추상화 유지
+### 1. Architecture — keep separation/abstraction
 
-- **crate 분리 유지**: 레이어(`pasu-ebpf`/`pasu-egress`/`pasu-toolgate`)·룰엔진(`pasu-rules`)은 독립 crate. **서로 직접 의존 금지.** `pasu-core`만 의존한다(의존 그래프 acyclic).
-- **구현은 trait 뒤에**: `RuleEngine`/`Layer`/`Transport`. Falco·eBPF·socket 같은 구체 구현을 trait 뒤에 격리해 **교체 가능**하게 둔다. 호출부는 trait만 본다.
-- **토글 ≠ 분리**: 런타임 토글(config `<layer>.enabled`)과 빌드 분리(crate/feature)를 **둘 다** 유지한다.
-- 새 기능이 crate 경계나 trait 추상화를 깨야 한다면 — **멈추고 재설계를 제안**한다. 임의로 결합하지 않는다.
+- **Keep crates separate**: layers (`pasu-ebpf` / `pasu-egress` / `pasu-toolgate`) and the rule engine (`pasu-rules`) are independent crates. **No direct dependency between them.** They depend only on `pasu-core` (acyclic dependency graph).
+- **Implementations behind traits**: `RuleEngine` / `Layer` / `Transport`. Concrete implementations (Falco, eBPF, socket) stay behind traits so they are **replaceable**. Callers see only the trait.
+- **Toggle ≠ split**: keep both runtime toggle (config `<layer>.enabled`) and build-time separation (crate/feature).
+- If a feature would break a crate boundary or trait abstraction — **stop and propose a redesign.** Do not couple things ad hoc.
 
-### 2. 룰
+### 2. Rules
 
-- 룰은 **Falco 문법 차용**하되 `RuleEngine` trait 뒤에 둔다. Falco 의존은 `pasu-rules` 한 crate에만 격리.
-- `default/`(프로젝트 관리, 업그레이드 시 덮어씀) vs `user/`(사용자 커스텀, 보존) 분리.
+- Rules **borrow Falco syntax** but stay behind the `RuleEngine` trait. The Falco dependency is isolated to the single `pasu-rules` crate.
+- Separate `default/` (project-managed, overwritten on upgrade) from `user/` (user customization, preserved).
 
-### 3. 테스트 — 보안 도구라 필수
+### 3. Tests — mandatory (this is a security tool)
 
-- **룰/로직 변경엔 회귀 테스트.** fix 전 fail / 후 pass (mutation 관점). 커버리지 채우기용 빈 테스트 금지.
-- **E2E는 production 룰셋을 검증**한다. 테스트용 미니룰만 검증하지 않는다.
-- **TP + TN 쌍**: 위험 차단(true positive) + 정상 통과(true negative, false positive 회귀) 둘 다.
-- **우회(적대적) 테스트**: enforcing > cooperative를 증명한다 (예: egress proxy 우회 → eBPF가 차단).
-- **테스트 없는 룰/로직 변경 금지.**
+- **Rule/logic changes need regression tests.** Fail before the fix / pass after (mutation sense). No empty coverage-filler tests.
+- **E2E validates the production ruleset**, not a test-only mini ruleset.
+- **TP + TN pairs**: both true positive (dangerous action blocked) and true negative (legitimate action passes — false-positive regression).
+- **Bypass (adversarial) tests**: prove enforcing > cooperative (e.g. egress-proxy bypass → eBPF blocks it).
+- **No rule/logic change without tests.**
 
 ### 4. fail-safe
 
-- 보안 도구다. **fail-closed**: 가드가 동작 불능이면 deny. 편의를 위한 우회 경로(fail-open 디폴트 등)를 만들지 않는다.
+- This is a security tool. **fail-closed**: if the guard cannot operate, deny. Do not add bypass paths (e.g. fail-open defaults) for convenience.
 
-### 5. 커밋 / PR
+### 5. Commits / PRs
 
-- **Conventional Commits** (`type(scope): 설명`). scope는 area(`toolgate`/`egress`/`ebpf`/`rules`/`ci`/`docs`)와 정렬.
-- **DCO sign-off 필수**: `git commit -s`.
-- **AI attribution 금지**: `Co-Authored-By: Claude` 등 넣지 않는다. 본인 명의 기여.
-- **scope 격리**: 한 PR = 한 문제.
-- **모든 변경은 feature 브랜치 → PR → CI green → merge.** main 직접 push 금지. 커밋/푸시/PR은 외부로 나가는 작업이므로 사용자 확인 후.
+- **Conventional Commits** (`type(scope): description`). Scope aligns with area (`toolgate` / `egress` / `ebpf` / `rules` / `ci` / `docs`).
+- **DCO sign-off required**: `git commit -s`.
+- **No AI attribution**: do not add `Co-Authored-By: Claude` or similar. Contributions under your own name.
+- **Isolated scope**: one PR = one problem.
+- **All changes go feature branch → PR → CI green → merge.** No direct push to main. Commits/pushes/PRs go out externally, so confirm with the user first.
 
-### 6. 코드 스타일 (Rust)
+### 6. Code style (Rust)
 
-- early return(no deep nesting), 불필요한 mutation 금지, fully typed(coarse type 지양), 상속보다 composition.
-- 주석은 최소 — 자명한 코드 지향. 매직넘버/문자열은 `constants`로.
-- `unwrap`/`expect`/`panic`을 사용자·네트워크 입력 경로에 두지 않는다. 실패는 값으로(`Result`).
+- Early returns (no deep nesting), no needless mutation, fully typed (avoid coarse types), composition over inheritance.
+- Minimal comments — aim for self-evident code. Magic numbers/strings go in `constants`.
+- No `unwrap` / `expect` / `panic` on user/network input paths. Model failures as values (`Result`).
 
-### 7. 플랫폼
+### 7. Platform
 
-- **Linux first.** eBPF는 Linux 전용 — mac/win은 egress proxy + tool gate만 동작하고, 그 사실을 명시한다.
-- eBPF 변경은 커널 권한(CAP_BPF)·커널 버전 의존성에 주의.
+- **Linux first.** eBPF is Linux-only — macOS/Windows run only egress proxy + tool gate, and that must be stated.
+- eBPF changes need care around kernel privileges (CAP_BPF) and kernel version dependencies.
 
 ---
 
-## 빌드 / 테스트 명령
+## Build / Test
 
 ```bash
 cargo build --workspace
@@ -78,4 +78,4 @@ cargo fmt --check
 
 ## Think first
 
-요청이 여러 해석 가능하면 임의로 고르지 말고 옵션을 제시한다. 더 단순한 길이 있으면 말한다. 불명확하면 멈추고 무엇이 불명확한지 짚는다.
+If a request has multiple interpretations, present options instead of guessing. If a simpler path exists, say so. If something is unclear, stop and name what is unclear.

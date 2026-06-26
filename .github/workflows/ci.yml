@@ -28,8 +28,8 @@ jobs:
       - name: test
         run: cargo test --workspace
 
-  # 단계적 추가 (설계: docs/ci.md):
-  #  - L3(eBPF): privileged ubuntu 러너 + 커널 버전 매트릭스 + CAP_BPF E2E
-  #  - 보안: cargo-audit / cargo-deny (의존성 취약점·라이선스)
-  #  - 플랫폼: macOS/Windows에서 L1+L2 (L3 제외)
-  #  - 릴리스: SLSA provenance (첫 릴리스 시)
+  # Added incrementally (design: docs/ci.md):
+  #  - eBPF: privileged ubuntu runner + kernel-version matrix + CAP_BPF E2E
+  #  - security: cargo-audit / cargo-deny (dependency vulns / licenses)
+  #  - platform: egress proxy + tool gate on macOS/Windows (no eBPF)
+  #  - release: SLSA provenance (at first release)
