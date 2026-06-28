@@ -23,9 +23,9 @@ pub struct Event {
 
 #[derive(Debug, Clone)]
 pub enum EventKind {
-    /// tool gate — a tool call.
+    /// rig AgentHook — a tool call.
     ToolCall { name: String, input: String },
-    /// egress proxy / eBPF — outbound network.
+    /// rig HttpClientExt / eBPF — outbound network.
     Egress { host: String, port: u16 },
 }
 
@@ -35,7 +35,7 @@ pub trait RuleEngine {
     fn evaluate(&self, event: &Event) -> Verdict;
 }
 
-/// Common interface for layers (tool gate / egress proxy / eBPF). Runtime-toggleable.
+/// Common interface for layers (rig integration / egress / eBPF). Runtime-toggleable.
 pub trait Layer {
     fn name(&self) -> &str;
     fn enabled(&self) -> bool;
