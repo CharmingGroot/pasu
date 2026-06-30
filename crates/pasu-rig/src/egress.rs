@@ -73,25 +73,124 @@ impl<E: RuleEngine + Send + Sync + 'static> Middleware for PasuEgressMiddleware<
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::sync::{Arc, Mutex};
 
-    /// Engine that allows a single host and denies the rest.
-    struct HostAllow(&'static str);
-    impl RuleEngine for HostAllow {
+    use reqwest_middleware::ClientBuilder;
+    use wiremock::matchers::method;
+    use wiremock::{Mock, MockServer, ResponseTemplate};
+
+    /// allow `ok.host`, ask `warn.host`, deny everything else.
+    struct PolicyEngine;
+    impl RuleEngine for PolicyEngine {
         fn evaluate(&self, event: &Event) -> Verdict {
             match &event.kind {
-                EventKind::Egress { host, .. } if host == self.0 => Verdict::Allow,
-                EventKind::Egress { host, .. } => {
-                    Verdict::Deny(format!("host not allowed: {host}"))
-                }
+                EventKind::Egress { host, .. } => match host.as_str() {
+                    "ok.host" => Verdict::Allow,
+                    "warn.host" => Verdict::Ask("confirm".into()),
+                    other => Verdict::Deny(format!("host not allowed: {other}")),
+                },
                 _ => Verdict::Allow,
             }
         }
     }
 
+    /// Allows only the given host (used with a dynamic mock-server address).
+    struct AllowOnly(String);
+    impl RuleEngine for AllowOnly {
+        fn evaluate(&self, event: &Event) -> Verdict {
+            match &event.kind {
+                EventKind::Egress { host, .. } if *host == self.0 => Verdict::Allow,
+                _ => Verdict::Deny("blocked".into()),
+            }
+        }
+    }
+
+    /// Records the (host, port) the engine was asked about, then allows.
+    #[derive(Clone, Default)]
+    struct Recorder(Arc<Mutex<Vec<(String, u16)>>>);
+    impl RuleEngine for Recorder {
+        fn evaluate(&self, event: &Event) -> Verdict {
+            if let EventKind::Egress { host, port } = &event.kind {
+                self.0.lock().unwrap().push((host.clone(), *port));
+            }
+            Verdict::Allow
+        }
+    }
+
     #[test]
-    fn allows_listed_host_blocks_others() {
-        let mw = PasuEgressMiddleware::new(HostAllow("llm.internal"));
-        assert!(matches!(mw.decide("llm.internal", 443), Verdict::Allow));
-        assert!(matches!(mw.decide("evil.example", 443), Verdict::Deny(_)));
+    fn decide_maps_each_verdict() {
+        let mw = PasuEgressMiddleware::new(PolicyEngine);
+        assert!(matches!(mw.decide("ok.host", 443), Verdict::Allow));
+        assert!(matches!(mw.decide("warn.host", 443), Verdict::Ask(_)));
+        assert!(matches!(mw.decide("evil.example", 80), Verdict::Deny(_)));
+    }
+
+    #[test]
+    fn decide_forwards_exact_host_and_port_to_engine() {
+        let rec = Recorder::default();
+        let seen = rec.0.clone();
+        let mw = PasuEgressMiddleware::new(rec);
+        let _ = mw.decide("api.example", 8443);
+        assert_eq!(
+            seen.lock().unwrap().as_slice(),
+            &[("api.example".into(), 8443)]
+        );
+    }
+
+    async fn send_get<E: RuleEngine + Send + Sync + 'static>(
+        mw: PasuEgressMiddleware<E>,
+        url: &str,
+    ) -> reqwest_middleware::Result<reqwest::Response> {
+        ClientBuilder::new(reqwest::Client::new())
+            .with(mw)
+            .build()
+            .get(url)
+            .send()
+            .await
+    }
+
+    #[tokio::test]
+    async fn handle_forwards_allowed_egress() {
+        let server = MockServer::start().await;
+        Mock::given(method("GET"))
+            .respond_with(ResponseTemplate::new(200))
+            .mount(&server)
+            .await;
+        let host = server.address().ip().to_string();
+        let resp = send_get(PasuEgressMiddleware::new(AllowOnly(host)), &server.uri())
+            .await
+            .expect("allowed egress should reach the server");
+        assert_eq!(resp.status(), 200);
+    }
+
+    #[tokio::test]
+    async fn handle_blocks_denied_egress() {
+        // No mock mounted: a denied request must never reach the server.
+        let server = MockServer::start().await;
+        let resp = send_get(
+            PasuEgressMiddleware::new(AllowOnly("not-the-server".into())),
+            &server.uri(),
+        )
+        .await;
+        assert!(
+            resp.is_err(),
+            "denied egress must be blocked by the middleware"
+        );
+    }
+
+    #[tokio::test]
+    async fn handle_disabled_passes_through_despite_deny() {
+        let server = MockServer::start().await;
+        Mock::given(method("GET"))
+            .respond_with(ResponseTemplate::new(200))
+            .mount(&server)
+            .await;
+        // Engine would deny, but the disabled guard must forward.
+        let mut mw = PasuEgressMiddleware::new(AllowOnly("not-the-server".into()));
+        mw.set_enabled(false);
+        let resp = send_get(mw, &server.uri())
+            .await
+            .expect("disabled guard should forward");
+        assert_eq!(resp.status(), 200);
     }
 }

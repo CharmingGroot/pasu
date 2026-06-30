@@ -92,4 +92,45 @@ mod tests {
     fn allow_stays_allow() {
         assert_eq!(Verdict::Allow.escalate(Verdict::Allow), Verdict::Allow);
     }
+
+    #[test]
+    fn deny_over_deny_keeps_the_first_reason() {
+        // Two blocks: keep the left (first-seen) reason deterministically.
+        assert_eq!(
+            Verdict::Deny("first".into()).escalate(Verdict::Deny("second".into())),
+            Verdict::Deny("first".into())
+        );
+    }
+
+    #[test]
+    fn deny_beats_ask_preserves_deny_reason_either_order() {
+        assert_eq!(
+            Verdict::Deny("d".into()).escalate(Verdict::Ask("a".into())),
+            Verdict::Deny("d".into())
+        );
+        assert_eq!(
+            Verdict::Ask("a".into()).escalate(Verdict::Deny("d".into())),
+            Verdict::Deny("d".into())
+        );
+    }
+
+    #[test]
+    fn ask_over_ask_keeps_the_first_reason() {
+        assert_eq!(
+            Verdict::Ask("first".into()).escalate(Verdict::Ask("second".into())),
+            Verdict::Ask("first".into())
+        );
+    }
+
+    #[test]
+    fn escalate_is_associative_for_mixed_verdicts() {
+        // deny must win regardless of grouping.
+        let a = Verdict::Allow;
+        let b = Verdict::Ask("a".into());
+        let c = Verdict::Deny("d".into());
+        let left = a.clone().escalate(b.clone()).escalate(c.clone());
+        let right = a.escalate(b.escalate(c));
+        assert_eq!(left, Verdict::Deny("d".into()));
+        assert_eq!(left, right);
+    }
 }
