@@ -31,8 +31,22 @@ jobs:
       - name: test
         run: cargo test
 
+  ebpf:
+    name: eBPF build (linux)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@nightly
+        with:
+          components: rust-src
+      - name: install bpf-linker
+        run: cargo install bpf-linker --locked
+      - uses: Swatinem/rust-cache@v2
+      - name: build eBPF stack
+        run: cargo build -p pasu-egress
+
   # Added incrementally (design: docs/ci.md):
-  #  - eBPF: privileged ubuntu runner + kernel-version matrix + CAP_BPF E2E
+  #  - eBPF E2E: privileged runner + kernel-version matrix + CAP_BPF (egress_e2e)
   #  - security: cargo-audit / cargo-deny (dependency vulns / licenses)
-  #  - platform: egress proxy + tool gate on macOS/Windows (no eBPF)
+  #  - platform: rig integration on macOS/Windows (no eBPF)
   #  - release: SLSA provenance (at first release)
