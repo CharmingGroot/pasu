@@ -45,8 +45,28 @@ jobs:
       - name: build eBPF stack
         run: cargo build -p pasu-egress
 
+  ebpf-e2e:
+    name: eBPF E2E (linux)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@nightly
+        with:
+          components: rust-src
+      - name: install bpf-linker
+        run: cargo install bpf-linker --locked
+      - uses: Swatinem/rust-cache@v2
+      - name: build E2E binary
+        run: cargo test -p pasu-egress --test egress_e2e --no-run
+      # cgroup egress E2E needs root (CAP_BPF + cgroup attach). PASU_E2E_KERNEL
+      # opts the test in; without it (and without root) the test self-skips.
+      - name: run E2E (privileged cgroup egress)
+        run: |
+          sudo env "PATH=$PATH" PASU_E2E_KERNEL=1 \
+            cargo test -p pasu-egress --test egress_e2e -- --test-threads=1 --nocapture
+
   # Added incrementally (design: docs/ci.md):
-  #  - eBPF E2E: privileged runner + kernel-version matrix + CAP_BPF (egress_e2e)
+  #  - eBPF kernel-version matrix (5.15 / 6.x / 7.x)
   #  - security: cargo-audit / cargo-deny (dependency vulns / licenses)
   #  - platform: rig integration on macOS/Windows (no eBPF)
   #  - release: SLSA provenance (at first release)
