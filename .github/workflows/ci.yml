@@ -62,7 +62,8 @@ jobs:
       # opts the test in; without it (and without root) the test self-skips.
       - name: run E2E (privileged cgroup egress)
         run: |
-          sudo env "PATH=$PATH" PASU_E2E_KERNEL=1 \
+          sudo env "PATH=$PATH" "RUSTUP_HOME=$HOME/.rustup" "CARGO_HOME=$HOME/.cargo" \
+            PASU_E2E_KERNEL=1 \
             cargo test -p pasu-egress --test egress_e2e -- --test-threads=1 --nocapture
 
   # Added incrementally (design: docs/ci.md):
