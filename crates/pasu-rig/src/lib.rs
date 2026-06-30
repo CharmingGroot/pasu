@@ -1,7 +1,7 @@
 //! pasu-rig — rig framework integration (the cooperative, in-process layer).
 //!
 //! Implements rig's hook points so a rig agent is guarded by default:
-//!   - `AgentHook`     — tool-call gate (this module; HITL approval next).
+//!   - `AgentHook`     — tool-call gate + HITL approval (this module).
 //!   - `HttpClientExt` — LLM egress guard (planned).
 //!
 //! Decisions go through `RuleEngine` and map to `pasu_core::Verdict`. This is
@@ -12,29 +12,62 @@
 //! rig is the only crate allowed to depend on `rig`; pasu-core stays pure so the
 //! engine can later gain adapters for other agent frameworks.
 
+use std::future::Future;
+
 use pasu_core::{Event, EventKind, RuleEngine, Verdict};
 use rig::agent::{AgentHook, Flow, StepEvent};
 use rig::completion::CompletionModel;
 
-/// Guards a rig agent's tool calls through a [`RuleEngine`].
+/// Human-in-the-loop approval for `Verdict::Ask`. Returns `true` to allow the
+/// tool call, `false` to block it. **Fail-closed**: on any doubt, return false.
+pub trait Approver: Send + Sync {
+    fn approve(&self, reason: &str) -> impl Future<Output = bool> + Send;
+}
+
+/// Default approver: denies every `Ask` (fail-closed). Supply a real approver
+/// via [`PasuSecurityHook::with_approver`].
+pub struct DenyAll;
+
+impl Approver for DenyAll {
+    fn approve(&self, _reason: &str) -> impl Future<Output = bool> + Send {
+        std::future::ready(false)
+    }
+}
+
+/// Guards a rig agent's tool calls through a [`RuleEngine`], with an optional
+/// human-approval path for `Ask`.
 ///
 /// On each tool call the hook builds an [`Event::ToolCall`], evaluates it, and
 /// maps the [`Verdict`] to a rig [`Flow`]:
 /// - `Allow` → continue
 /// - `Deny`  → skip (block) with the reason
-/// - `Ask`   → skip (fail-closed) until a human-approval path is wired in
+/// - `Ask`   → ask the [`Approver`]; approved → continue, otherwise skip (fail-closed)
 ///
 /// `enabled` is the runtime toggle (build-time separation stays at the crate level).
-pub struct PasuSecurityHook<E: RuleEngine> {
+pub struct PasuSecurityHook<E: RuleEngine, A: Approver = DenyAll> {
     engine: E,
+    approver: A,
     enabled: bool,
 }
 
-impl<E: RuleEngine> PasuSecurityHook<E> {
-    /// Enabled hook backed by `engine`.
+impl<E: RuleEngine> PasuSecurityHook<E, DenyAll> {
+    /// Enabled hook backed by `engine`. `Ask` verdicts are denied (fail-closed)
+    /// until an approver is supplied via [`Self::with_approver`].
     pub fn new(engine: E) -> Self {
         Self {
             engine,
+            approver: DenyAll,
+            enabled: true,
+        }
+    }
+}
+
+impl<E: RuleEngine, A: Approver> PasuSecurityHook<E, A> {
+    /// Enabled hook with a human-approval path for `Ask` verdicts.
+    pub fn with_approver(engine: E, approver: A) -> Self {
+        Self {
+            engine,
+            approver,
             enabled: true,
         }
     }
@@ -45,10 +78,11 @@ impl<E: RuleEngine> PasuSecurityHook<E> {
     }
 }
 
-impl<M, E> AgentHook<M> for PasuSecurityHook<E>
+impl<M, E, A> AgentHook<M> for PasuSecurityHook<E, A>
 where
     M: CompletionModel,
     E: RuleEngine + Send + Sync,
+    A: Approver,
 {
     async fn on_event(&self, event: StepEvent<'_, M>) -> Flow {
         if !self.enabled {
@@ -71,9 +105,12 @@ where
         match self.engine.evaluate(&event) {
             Verdict::Allow => Flow::cont(),
             Verdict::Deny(reason) => Flow::skip(reason),
-            // HITL not wired yet — fail-closed (deny) until an approval path lands.
             Verdict::Ask(reason) => {
-                Flow::skip(format!("approval required (fail-closed): {reason}"))
+                if self.approver.approve(&reason).await {
+                    Flow::cont()
+                } else {
+                    Flow::skip(format!("denied by approver (HITL): {reason}"))
+                }
             }
         }
     }
@@ -96,6 +133,14 @@ mod tests {
     impl RuleEngine for FixedEngine {
         fn evaluate(&self, _event: &Event) -> Verdict {
             self.0.clone()
+        }
+    }
+
+    /// Approver that always approves (test fixture for the HITL allow path).
+    struct AlwaysApprove;
+    impl Approver for AlwaysApprove {
+        fn approve(&self, _reason: &str) -> impl Future<Output = bool> + Send {
+            std::future::ready(true)
         }
     }
 
@@ -123,9 +168,9 @@ mod tests {
         }
     }
 
-    /// Run a single `net_call` tool turn under a hook with `verdict`; return how
-    /// many times the tool actually executed.
-    async fn tool_runs_under(verdict: Verdict) -> usize {
+    /// Run a single `net_call` tool turn under a hook built from `verdict` +
+    /// `approver`; return how many times the tool actually executed.
+    async fn tool_runs<A: Approver + 'static>(verdict: Verdict, approver: A) -> usize {
         let hits = Arc::new(AtomicUsize::new(0));
         let model = MockCompletionModel::new([
             MockTurn::tool_call("c1", "net_call", json!({})),
@@ -136,7 +181,7 @@ mod tests {
             .tool(CountTool { hits: hits.clone() })
             .build();
 
-        let hook = PasuSecurityHook::new(FixedEngine(verdict));
+        let hook = PasuSecurityHook::with_approver(FixedEngine(verdict), approver);
         agent
             .prompt("go")
             .max_turns(4)
@@ -149,19 +194,49 @@ mod tests {
 
     #[tokio::test]
     async fn allow_lets_tool_run() {
-        // TP-inverse: a permitted tool executes.
-        assert_eq!(tool_runs_under(Verdict::Allow).await, 1);
+        assert_eq!(tool_runs(Verdict::Allow, DenyAll).await, 1);
     }
 
     #[tokio::test]
     async fn deny_blocks_tool() {
         // TP: a denied tool never executes.
-        assert_eq!(tool_runs_under(Verdict::Deny("nope".into())).await, 0);
+        assert_eq!(tool_runs(Verdict::Deny("nope".into()), DenyAll).await, 0);
     }
 
     #[tokio::test]
-    async fn ask_is_fail_closed() {
-        // Until HITL is wired, Ask must block (no bypass).
-        assert_eq!(tool_runs_under(Verdict::Ask("confirm".into())).await, 0);
+    async fn ask_fails_closed_by_default() {
+        // DenyAll (and PasuSecurityHook::new) must block Ask — no bypass.
+        assert_eq!(tool_runs(Verdict::Ask("confirm".into()), DenyAll).await, 0);
+    }
+
+    #[tokio::test]
+    async fn ask_runs_when_approved() {
+        // HITL: an approved Ask lets the tool run.
+        assert_eq!(
+            tool_runs(Verdict::Ask("confirm".into()), AlwaysApprove).await,
+            1
+        );
+    }
+
+    #[tokio::test]
+    async fn new_defaults_to_deny_all() {
+        // The convenience constructor must be fail-closed for Ask.
+        let hits = Arc::new(AtomicUsize::new(0));
+        let model = MockCompletionModel::new([
+            MockTurn::tool_call("c1", "net_call", json!({})),
+            MockTurn::text("done"),
+        ]);
+        let agent = AgentBuilder::new(model)
+            .preamble("test agent")
+            .tool(CountTool { hits: hits.clone() })
+            .build();
+        let hook = PasuSecurityHook::new(FixedEngine(Verdict::Ask("x".into())));
+        agent
+            .prompt("go")
+            .max_turns(4)
+            .add_hook(hook)
+            .await
+            .expect("prompt completes");
+        assert_eq!(hits.load(Ordering::SeqCst), 0);
     }
 }
