@@ -1,0 +1,12 @@
+[package]
+name = "pasu-rig"
+version = "0.0.0"
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+
+[dependencies]
+pasu-core = { path = "../pasu-core" }
+# rig is the only crate allowed to depend on rig — the framework integration
+# (AgentHook + HttpClientExt) is isolated here so pasu-core stays pure.
+# rig = { version = "0.39", default-features = false }   # enabled when impls land

@@ -2,13 +2,12 @@
 resolver = "2"
 members = [
     "crates/pasu-core",
-    "crates/pasu-toolgate",
+    "crates/pasu-rig",
     # Added incrementally (design: docs/repo-structure.md):
     # "crates/pasu-rules",    # RuleEngine impl (borrows Falco)
-    # "crates/pasu-egress",   # egress proxy (OSI L7)
-    # "crates/pasu-ebpf",     # eBPF (OSI L3/L4, Linux)
-    # "crates/pasu-daemon",   # node daemon (egress + ebpf)
-    # "crates/pasu-sdk",      # tool gate embedding library
+    # "crates/pasu-egress",   # control plane: aya loader + policy map + DNS observe
+    # "crates/pasu-ebpf",     # kernel eBPF (cgroup egress, Linux)
+    # "crates/pasu-daemon",   # egress daemon binary (systemd, privileged)
 ]
 
 [workspace.package]
