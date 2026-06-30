@@ -23,10 +23,13 @@ jobs:
       - uses: Swatinem/rust-cache@v2
       - name: fmt
         run: cargo fmt --all --check
+      # default-members only (pasu-core, pasu-rig). The eBPF stack needs nightly +
+      # bpf-linker + a Linux/bpf target, so it is built and E2E-tested on Linux in
+      # a separate (privileged) job — see the ci.md plan below.
       - name: clippy
-        run: cargo clippy --workspace --all-targets -- -D warnings
+        run: cargo clippy --all-targets -- -D warnings
       - name: test
-        run: cargo test --workspace
+        run: cargo test
 
   # Added incrementally (design: docs/ci.md):
   #  - eBPF: privileged ubuntu runner + kernel-version matrix + CAP_BPF E2E

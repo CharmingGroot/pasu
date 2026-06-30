@@ -242,4 +242,56 @@ mod tests {
             .expect("prompt completes");
         assert_eq!(hits.load(Ordering::SeqCst), 0);
     }
+
+    /// Approver that records each reason it is asked about, then approves.
+    struct RecordingApprover(Arc<std::sync::Mutex<Vec<String>>>);
+    impl Approver for RecordingApprover {
+        fn approve(&self, reason: &str) -> impl Future<Output = bool> + Send {
+            self.0.lock().unwrap().push(reason.to_string());
+            std::future::ready(true)
+        }
+    }
+
+    #[tokio::test]
+    async fn approver_receives_the_ask_reason() {
+        // The reason carried by Verdict::Ask must reach the approver verbatim.
+        let log = Arc::new(std::sync::Mutex::new(Vec::new()));
+        let ran = tool_runs(
+            Verdict::Ask("please confirm".into()),
+            RecordingApprover(log.clone()),
+        )
+        .await;
+        assert_eq!(ran, 1, "an approved Ask runs the tool");
+        assert_eq!(
+            log.lock().unwrap().as_slice(),
+            &["please confirm".to_string()]
+        );
+    }
+
+    #[tokio::test]
+    async fn disabled_hook_runs_even_denied_tools() {
+        // The runtime toggle must short-circuit before any policy check.
+        let hits = Arc::new(AtomicUsize::new(0));
+        let model = MockCompletionModel::new([
+            MockTurn::tool_call("c1", "net_call", json!({})),
+            MockTurn::text("done"),
+        ]);
+        let agent = AgentBuilder::new(model)
+            .preamble("test agent")
+            .tool(CountTool { hits: hits.clone() })
+            .build();
+        let mut hook = PasuSecurityHook::new(FixedEngine(Verdict::Deny("blocked".into())));
+        hook.set_enabled(false);
+        agent
+            .prompt("go")
+            .max_turns(4)
+            .add_hook(hook)
+            .await
+            .expect("prompt completes");
+        assert_eq!(
+            hits.load(Ordering::SeqCst),
+            1,
+            "disabled hook forwards everything"
+        );
+    }
 }

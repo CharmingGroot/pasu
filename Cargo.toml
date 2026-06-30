@@ -3,12 +3,17 @@ resolver = "2"
 members = [
     "crates/pasu-core",
     "crates/pasu-rig",
+    "crates/pasu-ebpf-common",
+    "crates/pasu-ebpf",
+    "crates/pasu-egress",
     # Added incrementally (design: docs/repo-structure.md):
     # "crates/pasu-rules",    # RuleEngine impl (borrows Falco)
-    # "crates/pasu-egress",   # control plane: aya loader + policy map + DNS observe
-    # "crates/pasu-ebpf",     # kernel eBPF (cgroup egress, Linux)
     # "crates/pasu-daemon",   # egress daemon binary (systemd, privileged)
 ]
+# The eBPF stack needs nightly + bpf-linker + a Linux/bpf target, so it is kept
+# out of default-members: `cargo build/test` and CI (stable) only touch the
+# portable crates. Build the eBPF stack explicitly on Linux (see crates/pasu-egress).
+default-members = ["crates/pasu-core", "crates/pasu-rig"]
 
 [workspace.package]
 edition = "2021"
@@ -17,3 +22,22 @@ repository = "https://github.com/CharmingGroot/pasu"
 
 [workspace.dependencies]
 serde = { version = "1", features = ["derive"] }
+# eBPF stack (aya). Pinned to git until aya's next crates.io release.
+aya = { git = "https://github.com/aya-rs/aya", default-features = false }
+aya-build = { git = "https://github.com/aya-rs/aya", default-features = false }
+aya-ebpf = { git = "https://github.com/aya-rs/aya", default-features = false }
+aya-log = { git = "https://github.com/aya-rs/aya", default-features = false }
+aya-log-ebpf = { git = "https://github.com/aya-rs/aya", default-features = false }
+anyhow = { version = "1", default-features = false }
+cargo_metadata = { version = "0.23.0", default-features = false }
+clap = { version = "4.5.20", default-features = false, features = ["std"] }
+env_logger = { version = "0.11.5", default-features = false }
+libc = { version = "0.2.159", default-features = false }
+log = { version = "0.4.22", default-features = false }
+tokio = { version = "1.40.0", default-features = false }
+which = { version = "6.0.0", default-features = false }
+
+[profile.release.package.pasu-ebpf]
+debug = 2
+codegen-units = 1
+strip = false
