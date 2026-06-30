@@ -6,6 +6,7 @@ edition = "2024"
 license.workspace = true
 
 [dependencies]
+pasu-core = { path = "../pasu-core" }
 pasu-ebpf-common = { path = "../pasu-ebpf-common", features = ["user"] }
 
 anyhow = { workspace = true, default-features = true }
@@ -39,6 +40,9 @@ cargo_metadata = { workspace = true }
 # workflows with stable cargo; stable cargo outright refuses to load manifests that use unstable
 # features.
 pasu-ebpf = { path = "../pasu-ebpf" }
+
+[lib]
+path = "src/lib.rs"
 
 [[bin]]
 name = "pasu-egress"

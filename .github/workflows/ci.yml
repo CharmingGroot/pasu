@@ -32,7 +32,7 @@ jobs:
         run: cargo test
 
   ebpf:
-    name: eBPF build (linux)
+    name: eBPF build + unit (linux)
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -42,8 +42,10 @@ jobs:
       - name: install bpf-linker
         run: cargo install bpf-linker --locked
       - uses: Swatinem/rust-cache@v2
-      - name: build eBPF stack
-        run: cargo build -p pasu-egress
+      # builds the eBPF program (aya-build) and runs control-plane unit tests
+      # (EgressLayer); the cgroup E2E runs in the privileged ebpf-e2e job.
+      - name: build + unit-test eBPF stack
+        run: cargo test -p pasu-egress --lib
 
   ebpf-e2e:
     name: eBPF E2E (linux)
