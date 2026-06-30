@@ -12,6 +12,13 @@ pasu-core = { path = "../pasu-core" }
 # AgentHook landed upstream (PRs #1945..#1966) but isn't in published 0.39.0 yet,
 # so pin to a main commit until the next crates.io release.
 rig = { package = "rig-core", git = "https://github.com/0xPlaygrounds/rig", rev = "747b95a6a128bf325ce3fa6c7d655da3edb6b9d4" }
+# LLM egress guard: a reqwest-middleware that gates provider HTTP. The embedder
+# injects it via a rig provider's .http_client(); independent of rig itself.
+reqwest-middleware = "0.5.2"
+reqwest = { version = "0.13", default-features = false, features = ["rustls"] }
+http = "1"
+async-trait = "0.1"
+anyhow = "1"
 
 [dev-dependencies]
 rig = { package = "rig-core", git = "https://github.com/0xPlaygrounds/rig", rev = "747b95a6a128bf325ce3fa6c7d655da3edb6b9d4", features = ["test-utils"] }

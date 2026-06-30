@@ -2,15 +2,18 @@
 //!
 //! Implements rig's hook points so a rig agent is guarded by default:
 //!   - `AgentHook`     — tool-call gate + HITL approval (this module).
-//!   - `HttpClientExt` — LLM egress guard (planned).
+//!   - LLM egress       — [`PasuEgressMiddleware`] (the `egress` module).
 //!
 //! Decisions go through `RuleEngine` and map to `pasu_core::Verdict`. This is
-//! the *cooperative* layer: it sees tool_name/args, but not arbitrary code a
-//! tool runs internally. The kernel eBPF egress guard (pasu-egress / pasu-ebpf)
-//! is the *enforcing* backstop. Design: docs/rig-integration.md
+//! the *cooperative* layer: it sees tool_name/args and declared egress, but not
+//! arbitrary code a tool runs internally. The kernel eBPF egress guard
+//! (pasu-egress / pasu-ebpf) is the *enforcing* backstop. Design: docs/rig-integration.md
 //!
 //! rig is the only crate allowed to depend on `rig`; pasu-core stays pure so the
 //! engine can later gain adapters for other agent frameworks.
+
+mod egress;
+pub use egress::PasuEgressMiddleware;
 
 use std::future::Future;
 
