@@ -9,4 +9,12 @@ repository.workspace = true
 pasu-core = { path = "../pasu-core" }
 # rig is the only crate allowed to depend on rig — the framework integration
 # (AgentHook + HttpClientExt) is isolated here so pasu-core stays pure.
-# rig = { version = "0.39", default-features = false }   # enabled when impls land
+# AgentHook landed upstream (PRs #1945..#1966) but isn't in published 0.39.0 yet,
+# so pin to a main commit until the next crates.io release.
+rig = { package = "rig-core", git = "https://github.com/0xPlaygrounds/rig", rev = "747b95a6a128bf325ce3fa6c7d655da3edb6b9d4" }
+
+[dev-dependencies]
+rig = { package = "rig-core", git = "https://github.com/0xPlaygrounds/rig", rev = "747b95a6a128bf325ce3fa6c7d655da3edb6b9d4", features = ["test-utils"] }
+tokio = { version = "1", features = ["macros", "rt-multi-thread"] }
+serde = { workspace = true }
+serde_json = "1"
