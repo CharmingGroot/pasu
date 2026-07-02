@@ -22,6 +22,10 @@ const CGROUP: &str = "/sys/fs/cgroup/pasu-e2e";
 const ALLOWED_IP: &str = "1.0.0.1";
 /// Non-allowlisted destination — must be dropped under default-deny.
 const DENIED_IP: &str = "1.1.1.1";
+/// Stable domain that resolves to Cloudflare IPs (1.1.1.1 / 1.0.0.1) — includes ALLOWED_IP.
+const DOMAIN: &str = "one.one.one.one";
+/// An IP NOT covered by DOMAIN — must stay dropped even when DOMAIN is allowlisted.
+const OFF_DOMAIN_IP: &str = "8.8.8.8";
 
 fn e2e_enabled() -> bool {
     std::env::var_os("PASU_E2E_KERNEL").is_some()
@@ -65,16 +69,19 @@ impl Drop for Guard {
 }
 
 /// Create the dedicated cgroup and spawn the guard attached to it with `allow`.
-fn attach_guard(allow: &[&str]) -> Guard {
+fn attach_guard(allow: &[&str], domains: &[&str]) -> Guard {
     std::fs::create_dir_all(CGROUP).expect("create dedicated test cgroup");
     let mut cmd = Command::new(GUARD_BIN);
     cmd.args(["--cgroup-path", CGROUP]);
     for ip in allow {
         cmd.args(["--allow", ip]);
     }
+    for d in domains {
+        cmd.args(["--allow-domain", d]);
+    }
     cmd.env("RUST_LOG", "info");
     let guard = Guard(cmd.spawn().expect("spawn guard binary"));
-    std::thread::sleep(Duration::from_secs(2)); // let attach + map injection settle
+    std::thread::sleep(Duration::from_secs(3)); // attach + map injection + DNS resolve settle
     guard
 }
 
@@ -100,7 +107,7 @@ fn allowlist_permits_listed_denies_others() {
         return;
     }
 
-    let _guard = attach_guard(&[ALLOWED_IP]);
+    let _guard = attach_guard(&[ALLOWED_IP], &[]);
 
     // True negative: the allowlisted IP still connects (no over-blocking).
     assert!(
@@ -124,11 +131,36 @@ fn empty_allowlist_denies_all_egress() {
         return;
     }
 
-    let _guard = attach_guard(&[]); // nothing allowed
+    let _guard = attach_guard(&[], &[]); // nothing allowed
 
     // default-deny: with an empty allowlist, even ALLOWED_IP is dropped.
     assert!(
         !child_connects_in_cgroup(ALLOWED_IP),
         "empty allowlist must drop all non-loopback egress (default-deny)"
+    );
+}
+
+#[test]
+fn allowlist_by_domain_permits_resolved_denies_others() {
+    if should_skip() {
+        return;
+    }
+    if !baseline_connects(ALLOWED_IP) || !baseline_connects(OFF_DOMAIN_IP) {
+        eprintln!("SKIP: no baseline connectivity (offline?).");
+        return;
+    }
+
+    // Allow by DOMAIN — the loader resolves it (→ 1.1.1.1 / 1.0.0.1) into the ALLOW map.
+    let _guard = attach_guard(&[], &[DOMAIN]);
+
+    // A resolved IP of the domain is permitted.
+    assert!(
+        child_connects_in_cgroup(ALLOWED_IP),
+        "a resolved IP of allowlisted domain {DOMAIN} must be reachable"
+    );
+    // An IP outside the domain is still default-denied.
+    assert!(
+        !child_connects_in_cgroup(OFF_DOMAIN_IP),
+        "{OFF_DOMAIN_IP} (not part of {DOMAIN}) must be dropped"
     );
 }
