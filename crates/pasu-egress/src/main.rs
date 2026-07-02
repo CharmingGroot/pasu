@@ -10,11 +10,15 @@ use tokio::signal;
 
 #[derive(Debug, Parser)]
 struct Opt {
-    #[clap(short, long, default_value = "/sys/fs/cgroup")]
+    /// cgroup v2 path to attach to. REQUIRED, and must be a dedicated cgroup:
+    /// attaching default-deny to the root cgroup would cut the host's own egress
+    /// (SSH included). No default on purpose.
+    #[clap(short, long)]
     cgroup_path: std::path::PathBuf,
-    /// Destination IPv4 to block (repeatable). Injected into the BLOCK map (control plane → eBPF).
-    #[clap(short, long = "block")]
-    block: Vec<Ipv4Addr>,
+    /// Destination IPv4 allowed to egress (repeatable). Injected into the ALLOW
+    /// map (control plane → eBPF). Everything else is dropped (default-deny).
+    #[clap(short, long = "allow")]
+    allow: Vec<Ipv4Addr>,
 }
 
 #[tokio::main]
@@ -54,13 +58,13 @@ async fn main() -> anyhow::Result<()> {
         }
     }
 
-    // Control plane → eBPF: inject the blocklist into the BLOCK map.
+    // Control plane → eBPF: inject the allowlist into the ALLOW map.
     {
-        let mut block: AyaHashMap<_, u32, u8> =
-            AyaHashMap::try_from(ebpf.map_mut("BLOCK").context("BLOCK map not found")?)?;
-        for ip in &opt.block {
-            block.insert(u32::from(*ip), 1u8, 0)?;
-            println!("blocklist += {ip}");
+        let mut allow: AyaHashMap<_, u32, u8> =
+            AyaHashMap::try_from(ebpf.map_mut("ALLOW").context("ALLOW map not found")?)?;
+        for ip in &opt.allow {
+            allow.insert(u32::from(*ip), 1u8, 0)?;
+            println!("allowlist += {ip}");
         }
     }
 
