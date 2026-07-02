@@ -3,17 +3,17 @@ resolver = "2"
 members = [
     "crates/pasu-core",
     "crates/pasu-rig",
+    "crates/pasu-rules",
     "crates/pasu-ebpf-common",
     "crates/pasu-ebpf",
     "crates/pasu-egress",
     # Added incrementally (design: docs/repo-structure.md):
-    # "crates/pasu-rules",    # RuleEngine impl (borrows Falco)
     # "crates/pasu-daemon",   # egress daemon binary (systemd, privileged)
 ]
 # The eBPF stack needs nightly + bpf-linker + a Linux/bpf target, so it is kept
 # out of default-members: `cargo build/test` and CI (stable) only touch the
 # portable crates. Build the eBPF stack explicitly on Linux (see crates/pasu-egress).
-default-members = ["crates/pasu-core", "crates/pasu-rig"]
+default-members = ["crates/pasu-core", "crates/pasu-rig", "crates/pasu-rules"]
 
 [workspace.package]
 edition = "2021"
