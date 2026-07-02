@@ -15,27 +15,14 @@
 mod egress;
 pub use egress::PasuEgressMiddleware;
 
-use std::future::Future;
-
 use pasu_core::{Event, EventKind, RuleEngine, Verdict};
 use rig::agent::{AgentHook, Flow, StepEvent};
 use rig::completion::CompletionModel;
 
-/// Human-in-the-loop approval for `Verdict::Ask`. Returns `true` to allow the
-/// tool call, `false` to block it. **Fail-closed**: on any doubt, return false.
-pub trait Approver: Send + Sync {
-    fn approve(&self, reason: &str) -> impl Future<Output = bool> + Send;
-}
-
-/// Default approver: denies every `Ask` (fail-closed). Supply a real approver
-/// via [`PasuSecurityHook::with_approver`].
-pub struct DenyAll;
-
-impl Approver for DenyAll {
-    fn approve(&self, _reason: &str) -> impl Future<Output = bool> + Send {
-        std::future::ready(false)
-    }
-}
+// Approver / DenyAll now live in pasu-core (shared with pasu-ui). Re-export so
+// existing `pasu_rig::{Approver, DenyAll}` callers keep working; this also brings
+// Approver into scope for the trait bounds below.
+pub use pasu_core::{Approver, DenyAll};
 
 /// Guards a rig agent's tool calls through a [`RuleEngine`], with an optional
 /// human-approval path for `Ask`.
@@ -122,6 +109,7 @@ where
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::future::Future;
     use std::sync::atomic::{AtomicUsize, Ordering};
     use std::sync::Arc;
 

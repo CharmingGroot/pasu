@@ -42,6 +42,25 @@ pub trait Layer {
     fn check(&self, event: &Event) -> Verdict;
 }
 
+/// Human-in-the-loop approval for `Verdict::Ask`. Returns `true` to allow the
+/// action, `false` to block it. **Fail-closed by contract**: on any doubt (a
+/// closed channel, a timeout, an error), return false.
+///
+/// Lives in core so both the rig hook (pasu-rig) and UI-backed approvers
+/// (pasu-ui) implement the same trait.
+pub trait Approver: Send + Sync {
+    fn approve(&self, reason: &str) -> impl core::future::Future<Output = bool> + Send;
+}
+
+/// Default approver: denies every `Ask` (fail-closed).
+pub struct DenyAll;
+
+impl Approver for DenyAll {
+    fn approve(&self, _reason: &str) -> impl core::future::Future<Output = bool> + Send {
+        core::future::ready(false)
+    }
+}
+
 impl Verdict {
     /// Escalate to the more restrictive verdict: deny > ask > allow.
     /// When several layers/rules match, pick the strongest block.
