@@ -8,17 +8,19 @@ use aya_ebpf::{
 };
 use aya_log_ebpf::info;
 
-// M1: dynamic blocklist. Destination IPv4 addresses (host byte order) are injected
-// from user space (control plane), replacing the hardcoded single IP. Next step:
-// flip to default-deny allowlist under a dedicated test cgroup.
+// M1: default-deny allowlist. IPv4 destinations allowed to egress (host byte order)
+// are injected from user space (control plane); anything else is dropped.
+//
+// Because unlisted traffic is dropped, this MUST be attached to a dedicated cgroup,
+// NEVER the root cgroup (that would cut the host's own egress, including SSH).
 #[map]
-static BLOCK: HashMap<u32, u8> = HashMap::with_max_entries(1024, 0);
+static ALLOW: HashMap<u32, u8> = HashMap::with_max_entries(1024, 0);
 
 #[cgroup_skb]
 pub fn pasu_egress(ctx: SkBuffContext) -> i32 {
     match try_pasu_egress(ctx) {
         Ok(ret) => ret,
-        Err(_) => 1, // parse error → pass (blocklist blocks only known IPs)
+        Err(_) => 0, // parse failure → drop (default-deny: fail closed)
     }
 }
 
@@ -27,18 +29,26 @@ fn try_pasu_egress(ctx: SkBuffContext) -> Result<i32, ()> {
     // byte 0 = version/IHL; bytes 16..20 = destination address.
     let ver_ihl: u8 = ctx.load(0).map_err(|_| ())?;
     if ver_ihl >> 4 != 4 {
-        return Ok(1); // non-IPv4 → pass (M1 scope: IPv4 only)
+        // Non-IPv4 (IPv6, etc.) passes — M1 scope is IPv4. (IPv6 egress control is
+        // out of scope for now; documented as a known gap.)
+        return Ok(1);
     }
 
     let dst_be: u32 = ctx.load(16).map_err(|_| ())?;
-    let dst = u32::from_be(dst_be); // host byte order, matches u32::from(Ipv4Addr) in user space
+    let dst = u32::from_be(dst_be); // host byte order, matches u32::from(Ipv4Addr)
 
-    if unsafe { BLOCK.get(&dst) }.is_some() {
-        info!(&ctx, "pasu: blocked egress (dst in BLOCK map)");
-        return Ok(0); // drop
+    // Loopback (127.0.0.0/8) always passes: never break localhost or the DNS
+    // resolver, even under default-deny.
+    if dst >> 24 == 127 {
+        return Ok(1);
     }
 
-    Ok(1) // pass
+    if unsafe { ALLOW.get(&dst) }.is_some() {
+        return Ok(1); // allowlisted → pass
+    }
+
+    info!(&ctx, "pasu: dropped egress (dst not in ALLOW map)");
+    Ok(0) // default-deny → drop
 }
 
 #[cfg(not(test))]
