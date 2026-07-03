@@ -8,7 +8,7 @@
 //! binary (axum). The egress observability dashboard (roadmap M6) plugs in later
 //! on top of the observability stream (M5). Design: roadmap.md
 
-use std::collections::HashMap;
+use std::collections::{HashMap, VecDeque};
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
@@ -17,7 +17,7 @@ use axum::extract::{Form, State};
 use axum::response::{Html, Redirect};
 use axum::routing::{get, post};
 use axum::Router;
-use pasu_core::Approver;
+use pasu_core::{Approver, AuditRecord, AuditSink};
 use serde::Deserialize;
 use tokio::sync::oneshot;
 
@@ -140,18 +140,93 @@ impl Approver for UiApprover {
 
 // --- web UI (server-rendered, meta-refresh) ---
 
-/// axum router for the approval UI, backed by `state`.
-pub fn router(state: AppState) -> Router {
+/// A bounded ring buffer of recent audit records, exposed at `/audit`.
+/// Implements [`AuditSink`], so layers record into it via `with_sink`.
+#[derive(Clone)]
+pub struct AuditFeed {
+    inner: Arc<Mutex<VecDeque<AuditRecord>>>,
+    cap: usize,
+}
+
+impl AuditFeed {
+    /// A feed keeping the most recent `cap` records.
+    pub fn new(cap: usize) -> Self {
+        Self {
+            inner: Arc::new(Mutex::new(VecDeque::new())),
+            cap,
+        }
+    }
+
+    /// Snapshot of buffered records, oldest first.
+    pub fn recent(&self) -> Vec<AuditRecord> {
+        self.inner.lock().unwrap().iter().cloned().collect()
+    }
+}
+
+impl AuditSink for AuditFeed {
+    fn record(&self, record: &AuditRecord) {
+        let mut q = self.inner.lock().unwrap();
+        if self.cap > 0 && q.len() >= self.cap {
+            q.pop_front();
+        }
+        q.push_back(record.clone());
+    }
+}
+
+/// axum router: approval UI (`/`, `/decision`) + audit view (`/audit`).
+pub fn router(approvals: AppState, feed: AuditFeed) -> Router {
     Router::new()
         .route("/", get(index))
         .route("/decision", post(decision))
-        .with_state(state)
+        .with_state(approvals)
+        .merge(
+            Router::new()
+                .route("/audit", get(audit_index))
+                .with_state(feed),
+        )
 }
 
 /// Serve the UI on `addr` until the process exits.
-pub async fn serve(addr: std::net::SocketAddr, state: AppState) -> std::io::Result<()> {
+pub async fn serve(
+    addr: std::net::SocketAddr,
+    approvals: AppState,
+    feed: AuditFeed,
+) -> std::io::Result<()> {
     let listener = tokio::net::TcpListener::bind(addr).await?;
-    axum::serve(listener, router(state)).await
+    axum::serve(listener, router(approvals, feed)).await
+}
+
+async fn audit_index(State(feed): State<AuditFeed>) -> Html<String> {
+    let rows: String = feed
+        .recent()
+        .iter()
+        .rev()
+        .map(|r| {
+            let reason = r
+                .reason
+                .as_deref()
+                .map(|x| format!(" — {}", escape(x)))
+                .unwrap_or_default();
+            format!(
+                "<li><code>{}</code> {} → <b>{:?}</b>{}</li>",
+                escape(&r.layer),
+                escape(&r.subject),
+                r.verdict,
+                reason
+            )
+        })
+        .collect();
+    let body = if rows.is_empty() {
+        "<p>no decisions yet</p>".to_string()
+    } else {
+        format!("<ul>{rows}</ul>")
+    };
+    Html(format!(
+        "<!doctype html><meta charset=\"utf-8\">\
+         <meta http-equiv=\"refresh\" content=\"2\">\
+         <title>pasu — audit</title>\
+         <h1>pasu — recent decisions</h1>{body}"
+    ))
 }
 
 async fn index(State(state): State<AppState>) -> Html<String> {
@@ -178,7 +253,8 @@ async fn index(State(state): State<AppState>) -> Html<String> {
         "<!doctype html><meta charset=\"utf-8\">\
          <meta http-equiv=\"refresh\" content=\"2\">\
          <title>pasu — approvals</title>\
-         <h1>pasu — pending approvals</h1>{body}"
+         <h1>pasu — pending approvals</h1>\
+         <p><a href=\"/audit\">audit log →</a></p>{body}"
     ))
 }
 
@@ -250,5 +326,37 @@ mod tests {
     async fn decide_unknown_id_is_false() {
         let a = UiApprover::new();
         assert!(!a.state().decide(999, true));
+    }
+
+    fn rec(subject: &str) -> pasu_core::AuditRecord {
+        let ev = pasu_core::Event {
+            kind: pasu_core::EventKind::Egress {
+                host: subject.to_string(),
+                port: 443,
+            },
+        };
+        pasu_core::AuditRecord::new("rig-egress", &ev, &pasu_core::Verdict::Allow)
+    }
+
+    #[test]
+    fn audit_feed_keeps_only_recent_within_cap() {
+        let feed = AuditFeed::new(2);
+        feed.record(&rec("a"));
+        feed.record(&rec("b"));
+        feed.record(&rec("c"));
+        let recent = feed.recent();
+        assert_eq!(recent.len(), 2);
+        // oldest ("a") dropped; keeps b, c in order.
+        assert_eq!(recent[0].subject, "b:443");
+        assert_eq!(recent[1].subject, "c:443");
+    }
+
+    #[test]
+    fn audit_feed_shares_via_clone() {
+        let feed = AuditFeed::new(8);
+        let handle = feed.clone();
+        feed.record(&rec("x"));
+        // the clone sees the same buffer
+        assert_eq!(handle.recent().len(), 1);
     }
 }
