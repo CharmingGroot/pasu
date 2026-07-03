@@ -5,6 +5,7 @@ members = [
     "crates/pasu-rig",
     "crates/pasu-rules",
     "crates/pasu-ui",
+    "crates/pasu-audit",
     "crates/pasu-ebpf-common",
     "crates/pasu-ebpf",
     "crates/pasu-egress",
@@ -19,6 +20,7 @@ default-members = [
     "crates/pasu-rig",
     "crates/pasu-rules",
     "crates/pasu-ui",
+    "crates/pasu-audit",
 ]
 
 [workspace.package]

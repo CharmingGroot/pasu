@@ -4,6 +4,8 @@
 //! crate depends on nothing (pure); other crates depend only on core (acyclic).
 //! Design: docs/repo-structure.md
 
+use serde::Serialize;
+
 /// A policy decision.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Verdict {
@@ -59,6 +61,56 @@ impl Approver for DenyAll {
     fn approve(&self, _reason: &str) -> impl core::future::Future<Output = bool> + Send {
         core::future::ready(false)
     }
+}
+
+/// The verdict variant without its reason payload (reason is a sibling field).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "lowercase")]
+pub enum VerdictKind {
+    Allow,
+    Deny,
+    Ask,
+}
+
+/// A decision flattened for audit logging, built from an [`Event`] + [`Verdict`]
+/// by the layer that made the call. Serializable (JSONL, SIEM, UI stream).
+#[derive(Debug, Clone, Serialize)]
+pub struct AuditRecord {
+    /// Which layer decided: e.g. "rig-tool", "rig-egress", "egress".
+    pub layer: String,
+    /// What was evaluated: a tool name, or "host:port".
+    pub subject: String,
+    /// The outcome.
+    pub verdict: VerdictKind,
+    /// Reason for deny/ask (None for allow).
+    pub reason: Option<String>,
+}
+
+impl AuditRecord {
+    /// Flatten an evaluated event into an audit record.
+    pub fn new(layer: &str, event: &Event, verdict: &Verdict) -> Self {
+        let subject = match &event.kind {
+            EventKind::ToolCall { name, .. } => name.clone(),
+            EventKind::Egress { host, port } => format!("{host}:{port}"),
+        };
+        let (verdict, reason) = match verdict {
+            Verdict::Allow => (VerdictKind::Allow, None),
+            Verdict::Deny(r) => (VerdictKind::Deny, Some(r.clone())),
+            Verdict::Ask(r) => (VerdictKind::Ask, Some(r.clone())),
+        };
+        Self {
+            layer: layer.to_string(),
+            subject,
+            verdict,
+            reason,
+        }
+    }
+}
+
+/// Sink for audit records — stderr (JSONL), a channel, a file, etc. Kept in core
+/// so any layer can emit without depending on a concrete sink implementation.
+pub trait AuditSink: Send + Sync {
+    fn record(&self, record: &AuditRecord);
 }
 
 impl Verdict {
@@ -151,5 +203,34 @@ mod tests {
         let right = a.escalate(b.escalate(c));
         assert_eq!(left, Verdict::Deny("d".into()));
         assert_eq!(left, right);
+    }
+
+    #[test]
+    fn audit_record_flattens_tool_deny() {
+        let ev = Event {
+            kind: EventKind::ToolCall {
+                name: "rm_rf".into(),
+                input: "{}".into(),
+            },
+        };
+        let rec = AuditRecord::new("rig-tool", &ev, &Verdict::Deny("destructive".into()));
+        assert_eq!(rec.layer, "rig-tool");
+        assert_eq!(rec.subject, "rm_rf");
+        assert_eq!(rec.verdict, VerdictKind::Deny);
+        assert_eq!(rec.reason.as_deref(), Some("destructive"));
+    }
+
+    #[test]
+    fn audit_record_flattens_egress_allow() {
+        let ev = Event {
+            kind: EventKind::Egress {
+                host: "api.openai.com".into(),
+                port: 443,
+            },
+        };
+        let rec = AuditRecord::new("egress", &ev, &Verdict::Allow);
+        assert_eq!(rec.subject, "api.openai.com:443");
+        assert_eq!(rec.verdict, VerdictKind::Allow);
+        assert!(rec.reason.is_none());
     }
 }
