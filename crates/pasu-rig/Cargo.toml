@@ -27,3 +27,5 @@ serde = { workspace = true }
 serde_json = "1"
 # egress handle() integration tests: a local mock HTTP server.
 wiremock = "0.6"
+# audit-wiring tests use the in-memory sink.
+pasu-audit = { path = "../pasu-audit" }

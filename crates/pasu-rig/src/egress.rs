@@ -7,17 +7,20 @@
 //! before the request leaves the process. This is the *cooperative* layer; the
 //! kernel eBPF egress guard is the *enforcing* backstop. Design: docs/rig-integration.md
 
+use std::sync::Arc;
+
 use anyhow::anyhow;
 use http::Extensions;
 use reqwest::{Request, Response};
 use reqwest_middleware::{Middleware, Next};
 
-use pasu_core::{Event, EventKind, RuleEngine, Verdict};
+use pasu_core::{AuditRecord, AuditSink, Event, EventKind, RuleEngine, Verdict};
 
 /// reqwest-middleware that allows or blocks LLM-provider egress by policy.
 pub struct PasuEgressMiddleware<E: RuleEngine> {
     engine: E,
     enabled: bool,
+    sink: Option<Arc<dyn AuditSink>>,
 }
 
 impl<E: RuleEngine> PasuEgressMiddleware<E> {
@@ -26,7 +29,14 @@ impl<E: RuleEngine> PasuEgressMiddleware<E> {
         Self {
             engine,
             enabled: true,
+            sink: None,
         }
+    }
+
+    /// Attach an audit sink; every egress decision is recorded (layer "rig-egress").
+    pub fn with_sink(mut self, sink: Arc<dyn AuditSink>) -> Self {
+        self.sink = Some(sink);
+        self
     }
 
     /// Runtime toggle. When disabled, all egress passes through.
@@ -60,7 +70,18 @@ impl<E: RuleEngine + Send + Sync + 'static> Middleware for PasuEgressMiddleware<
         let host = req.url().host_str().unwrap_or_default().to_string();
         let port = req.url().port_or_known_default().unwrap_or(0);
 
-        match self.decide(&host, port) {
+        let verdict = self.decide(&host, port);
+        if let Some(sink) = &self.sink {
+            let event = Event {
+                kind: EventKind::Egress {
+                    host: host.clone(),
+                    port,
+                },
+            };
+            sink.record(&AuditRecord::new("rig-egress", &event, &verdict));
+        }
+
+        match verdict {
             Verdict::Allow => next.run(req, extensions).await,
             // Egress has no interactive approval path, so Ask is fail-closed (block).
             Verdict::Deny(reason) | Verdict::Ask(reason) => Err(
@@ -192,5 +213,23 @@ mod tests {
             .await
             .expect("disabled guard should forward");
         assert_eq!(resp.status(), 200);
+    }
+
+    #[tokio::test]
+    async fn records_egress_decision_to_sink() {
+        let server = MockServer::start().await;
+        Mock::given(method("GET"))
+            .respond_with(ResponseTemplate::new(200))
+            .mount(&server)
+            .await;
+        let host = server.address().ip().to_string();
+        let sink = Arc::new(pasu_audit::MemorySink::default());
+        let mw = PasuEgressMiddleware::new(AllowOnly(host)).with_sink(sink.clone());
+        let _ = send_get(mw, &server.uri()).await;
+
+        let recs = sink.records();
+        assert_eq!(recs.len(), 1);
+        assert_eq!(recs[0].layer, "rig-egress");
+        assert_eq!(recs[0].verdict, pasu_core::VerdictKind::Allow);
     }
 }
