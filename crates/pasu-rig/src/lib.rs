@@ -15,7 +15,9 @@
 mod egress;
 pub use egress::PasuEgressMiddleware;
 
-use pasu_core::{Event, EventKind, RuleEngine, Verdict};
+use std::sync::Arc;
+
+use pasu_core::{AuditRecord, AuditSink, Event, EventKind, RuleEngine, Verdict};
 use rig::agent::{AgentHook, Flow, StepEvent};
 use rig::completion::CompletionModel;
 
@@ -38,6 +40,7 @@ pub struct PasuSecurityHook<E: RuleEngine, A: Approver = DenyAll> {
     engine: E,
     approver: A,
     enabled: bool,
+    sink: Option<Arc<dyn AuditSink>>,
 }
 
 impl<E: RuleEngine> PasuSecurityHook<E, DenyAll> {
@@ -48,6 +51,7 @@ impl<E: RuleEngine> PasuSecurityHook<E, DenyAll> {
             engine,
             approver: DenyAll,
             enabled: true,
+            sink: None,
         }
     }
 }
@@ -59,7 +63,14 @@ impl<E: RuleEngine, A: Approver> PasuSecurityHook<E, A> {
             engine,
             approver,
             enabled: true,
+            sink: None,
         }
+    }
+
+    /// Attach an audit sink; every tool-call decision is recorded (layer "rig-tool").
+    pub fn with_sink(mut self, sink: Arc<dyn AuditSink>) -> Self {
+        self.sink = Some(sink);
+        self
     }
 
     /// Runtime toggle. When disabled the hook passes everything through.
@@ -92,7 +103,12 @@ where
             },
         };
 
-        match self.engine.evaluate(&event) {
+        let verdict = self.engine.evaluate(&event);
+        if let Some(sink) = &self.sink {
+            sink.record(&AuditRecord::new("rig-tool", &event, &verdict));
+        }
+
+        match verdict {
             Verdict::Allow => Flow::cont(),
             Verdict::Deny(reason) => Flow::skip(reason),
             Verdict::Ask(reason) => {
@@ -281,5 +297,33 @@ mod tests {
             1,
             "disabled hook forwards everything"
         );
+    }
+
+    #[tokio::test]
+    async fn records_decision_to_audit_sink() {
+        let sink = Arc::new(pasu_audit::MemorySink::default());
+        let hits = Arc::new(AtomicUsize::new(0));
+        let model = MockCompletionModel::new([
+            MockTurn::tool_call("c1", "net_call", json!({})),
+            MockTurn::text("done"),
+        ]);
+        let agent = AgentBuilder::new(model)
+            .preamble("test agent")
+            .tool(CountTool { hits: hits.clone() })
+            .build();
+        let hook = PasuSecurityHook::new(FixedEngine(Verdict::Deny("blocked".into())))
+            .with_sink(sink.clone());
+        agent
+            .prompt("go")
+            .max_turns(4)
+            .add_hook(hook)
+            .await
+            .expect("prompt completes");
+
+        let recs = sink.records();
+        assert_eq!(recs.len(), 1);
+        assert_eq!(recs[0].layer, "rig-tool");
+        assert_eq!(recs[0].subject, "net_call");
+        assert_eq!(recs[0].verdict, pasu_core::VerdictKind::Deny);
     }
 }
