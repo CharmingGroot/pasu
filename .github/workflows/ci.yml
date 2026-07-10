@@ -68,8 +68,16 @@ jobs:
             PASU_E2E_KERNEL=1 \
             cargo test -p pasu-egress --test egress_e2e -- --test-threads=1 --nocapture
 
+  supply-chain:
+    name: cargo-deny (advisories · licenses · sources)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: EmbarkStudios/cargo-deny-action@v2
+        with:
+          command: check advisories licenses bans sources
+
   # Added incrementally (design: docs/ci.md):
   #  - eBPF kernel-version matrix (5.15 / 6.x / 7.x)
-  #  - security: cargo-audit / cargo-deny (dependency vulns / licenses)
   #  - platform: rig integration on macOS/Windows (no eBPF)
   #  - release: SLSA provenance (at first release)
