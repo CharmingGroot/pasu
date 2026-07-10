@@ -8,6 +8,8 @@
 //! binary (axum). The egress observability dashboard (roadmap M6) plugs in later
 //! on top of the observability stream (M5). Design: roadmap.md
 
+pub mod dashboard;
+
 use std::collections::{HashMap, VecDeque};
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
@@ -186,14 +188,38 @@ pub fn router(approvals: AppState, feed: AuditFeed) -> Router {
         )
 }
 
+/// Router including the egress dashboard (`/egress`) when an admin client is
+/// given. `policy_path` (optional) renders the read-only ruleset view.
+pub fn router_with_dashboard(
+    approvals: AppState,
+    feed: AuditFeed,
+    egress: Option<dashboard::EgressUi>,
+) -> Router {
+    let base = router(approvals, feed);
+    match egress {
+        Some(ui) => base.merge(dashboard::router(ui)),
+        None => base,
+    }
+}
+
 /// Serve the UI on `addr` until the process exits.
 pub async fn serve(
     addr: std::net::SocketAddr,
     approvals: AppState,
     feed: AuditFeed,
 ) -> std::io::Result<()> {
+    serve_all(addr, approvals, feed, None).await
+}
+
+/// Serve the UI plus the egress dashboard (when `egress` is provided).
+pub async fn serve_all(
+    addr: std::net::SocketAddr,
+    approvals: AppState,
+    feed: AuditFeed,
+    egress: Option<dashboard::EgressUi>,
+) -> std::io::Result<()> {
     let listener = tokio::net::TcpListener::bind(addr).await?;
-    axum::serve(listener, router(approvals, feed)).await
+    axum::serve(listener, router_with_dashboard(approvals, feed, egress)).await
 }
 
 async fn audit_index(State(feed): State<AuditFeed>) -> Html<String> {
@@ -254,7 +280,7 @@ async fn index(State(state): State<AppState>) -> Html<String> {
          <meta http-equiv=\"refresh\" content=\"2\">\
          <title>pasu — approvals</title>\
          <h1>pasu — pending approvals</h1>\
-         <p><a href=\"/audit\">audit log →</a></p>{body}"
+         <p><a href=\"/audit\">audit log →</a> · <a href=\"/egress\">egress guard →</a></p>{body}"
     ))
 }
 
@@ -269,7 +295,7 @@ async fn decision(State(state): State<AppState>, Form(d): Form<Decision>) -> Red
     Redirect::to("/")
 }
 
-fn escape(s: &str) -> String {
+pub(crate) fn escape(s: &str) -> String {
     s.replace('&', "&amp;")
         .replace('<', "&lt;")
         .replace('>', "&gt;")

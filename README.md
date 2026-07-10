@@ -103,10 +103,20 @@ echo 'allow 1.2.3.4' | socat - UNIX-CONNECT:/run/pasu.sock  # add to the kernel 
 echo 'deny 1.2.3.4'  | socat - UNIX-CONNECT:/run/pasu.sock  # remove it now
 ```
 
-Approval + audit web UI:
+Web UI — approvals (`/`), audit (`/audit`), and a live **egress dashboard**
+(`/egress`: kernel filter coverage, add/remove allowlist entries, read-only
+policy view with each rule's verdict + tool guard):
 
 ```rust
-pasu_ui::serve(addr, approvals, feed).await?;   // "/" approvals · "/audit" decisions
+use pasu_ui::dashboard::{EgressAdmin, EgressUi};
+let egress = EgressUi::new(EgressAdmin::new("/run/pasu.sock"), Some("rules.yaml".into()));
+pasu_ui::serve_all(addr, approvals, feed, Some(egress)).await?;   // + /egress
+```
+
+Try it without a kernel (mock guard socket):
+
+```bash
+cargo run -p pasu-ui --example ui_demo   # http://127.0.0.1:8787/egress
 ```
 
 ## Run in a container

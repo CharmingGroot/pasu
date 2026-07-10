@@ -1577,6 +1577,7 @@ dependencies = [
  "pasu-ebpf",
  "pasu-ebpf-common",
  "serde",
+ "serde_json",
  "tokio",
  "toml",
 ]
@@ -1616,6 +1617,8 @@ dependencies = [
  "axum",
  "pasu-core",
  "serde",
+ "serde_json",
+ "serde_yaml",
  "tokio",
 ]
 

@@ -88,7 +88,11 @@ fn allow_list(ebpf: &aya::Ebpf) -> Vec<String> {
     let Ok(allow): Result<AyaHashMap<_, u32, u8>, _> = AyaHashMap::try_from(map) else {
         return Vec::new();
     };
-    let mut ips: Vec<Ipv4Addr> = allow.keys().filter_map(Result::ok).map(Ipv4Addr::from).collect();
+    let mut ips: Vec<Ipv4Addr> = allow
+        .keys()
+        .filter_map(Result::ok)
+        .map(Ipv4Addr::from)
+        .collect();
     ips.sort();
     ips.into_iter().map(|ip| ip.to_string()).collect()
 }
@@ -131,7 +135,9 @@ async fn handle_line(line: &str, tx: &mpsc::Sender<Command>) -> String {
                 return err_json("guard is shutting down");
             }
             match rrx.await {
-                Ok(status) => serde_json::to_string(&status).unwrap_or_else(|e| err_json(&e.to_string())),
+                Ok(status) => {
+                    serde_json::to_string(&status).unwrap_or_else(|e| err_json(&e.to_string()))
+                }
                 Err(_) => err_json("no reply from guard"),
             }
         }
@@ -217,8 +223,8 @@ pub async fn run(cfg: GuardConfig) -> anyhow::Result<()> {
     let admin_enabled = cfg.admin_socket.is_some();
     if let Some(path) = &cfg.admin_socket {
         let _ = std::fs::remove_file(path); // clear a stale socket
-        let listener =
-            UnixListener::bind(path).with_context(|| format!("bind admin socket {}", path.display()))?;
+        let listener = UnixListener::bind(path)
+            .with_context(|| format!("bind admin socket {}", path.display()))?;
         println!("admin socket: {}", path.display());
         tokio::spawn(serve_admin(listener, admin_tx));
     } else {

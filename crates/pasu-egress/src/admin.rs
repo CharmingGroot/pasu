@@ -32,7 +32,9 @@ pub fn parse_request(line: &str) -> Result<Request, String> {
     match verb.as_str() {
         "status" => Ok(Request::Status),
         "allow" | "deny" => {
-            let arg = parts.next().ok_or_else(|| format!("{verb}: missing <ipv4>"))?;
+            let arg = parts
+                .next()
+                .ok_or_else(|| format!("{verb}: missing <ipv4>"))?;
             let ip: Ipv4Addr = arg
                 .parse()
                 .map_err(|_| format!("{verb}: invalid ipv4 `{arg}`"))?;
