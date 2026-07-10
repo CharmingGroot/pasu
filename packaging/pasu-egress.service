@@ -1,0 +1,18 @@
+[Unit]
+Description=pasu egress guard (eBPF default-deny allowlist)
+Documentation=https://github.com/CharmingGroot/pasu
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+ExecStart=/usr/local/bin/pasu-egress --config /etc/pasu/egress.toml
+# Attaching a cgroup_skb egress program needs CAP_BPF + CAP_NET_ADMIN; running as
+# root is the simplest start. The cgroup in the config MUST be dedicated — never
+# the root cgroup, or default-deny would cut the host's own egress (SSH included).
+AmbientCapabilities=CAP_BPF CAP_NET_ADMIN
+Restart=on-failure
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target

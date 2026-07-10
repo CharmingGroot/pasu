@@ -1,0 +1,15 @@
+# pasu egress guard — default-deny allowlist config.
+#
+# Attach to a DEDICATED cgroup and put the agent's processes into it.
+# NEVER the root cgroup: default-deny there cuts the host's own egress.
+cgroup_path = "/sys/fs/cgroup/pasu-agent"
+
+# Static IPv4 destinations allowed to egress. Everything not listed is dropped.
+allow = ["1.0.0.1"]
+
+# Domains — resolved to IPv4 and re-resolved every `refresh_secs`.
+# (Best-effort control-plane resolution; IPv4 only. See M2b in the roadmap.)
+allow_domain = ["api.openai.com"]
+
+# DNS re-resolution interval, seconds.
+refresh_secs = 30

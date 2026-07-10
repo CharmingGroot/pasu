@@ -24,6 +24,9 @@ tokio = { workspace = true, features = [
     "time",
 ] }
 clap = { workspace = true, features = ["derive"] }
+serde = { workspace = true }
+toml = "0.8"
+
 [build-dependencies]
 anyhow = { workspace = true }
 aya-build = { workspace = true }
