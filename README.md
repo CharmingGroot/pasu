@@ -32,7 +32,7 @@ calls and egress, but a tool running its own network code slips past them.
 pasu runs **two layers that share one policy**:
 
 <p align="center">
-  <img src="docs/architecture.svg" width="700" alt="pasu two-layer egress defense: cooperative rig hooks backed by an enforcing kernel eBPF guard">
+  <img src="docs/flow.svg" width="760" alt="pasu two-layer egress defense: one policy drives a cooperative rig hook and an enforcing kernel eBPF guard; a rogue egress that bypasses the hook is still dropped by the kernel">
 </p>
 
 - **① Cooperative — in-process (`pasu-rig`)**: tool-call gate + HITL approval, LLM egress by policy. Rich context; bypassable.
