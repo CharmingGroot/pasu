@@ -94,6 +94,21 @@ Approval + audit web UI:
 pasu_ui::serve(addr, approvals, feed).await?;   // "/" approvals · "/audit" decisions
 ```
 
+## Run in a container
+
+The kernel guard containerizes like any eBPF tool — `CAP_BPF` + `CAP_NET_ADMIN`
+and a cgroup v2 mount. Quick proof (only `1.1.1.1` allowed; the kernel drops
+everything else, whatever the app does):
+
+```bash
+docker build -f deploy/Dockerfile -t pasu-egress:latest .
+./deploy/demo.sh    # allowed -> reachable · blocked -> dropped · RESULT: PASS
+```
+
+Sidecar ([`deploy/docker-compose.yml`](deploy/docker-compose.yml)) and Kubernetes
+([`deploy/k8s/`](deploy/k8s)) layouts, and the cgroup-targeting rules, are in
+**[docs/deployment.md](docs/deployment.md)**.
+
 ## Crates
 
 <p align="center">
