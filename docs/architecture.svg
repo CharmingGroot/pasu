@@ -1,0 +1,48 @@
+<svg viewBox="0 0 680 520" xmlns="http://www.w3.org/2000/svg" role="img" font-family="system-ui, -apple-system, sans-serif">
+<title>pasu 2계층 egress 방어 아키텍처</title>
+<desc>rig의 협조적 후킹(AgentHook, HttpClientExt)을 tool이 우회해도 커널 eBPF cgroup egress 가드가 차단한다는 것을 보여주는 다이어그램</desc>
+<rect width="680" height="520" fill="#ffffff"/>
+<defs>
+  <marker id="arr" markerWidth="9" markerHeight="9" refX="6" refY="3" orient="auto"><path d="M0,0 L6,3 L0,6 Z" fill="#555555"/></marker>
+  <marker id="arrD" markerWidth="9" markerHeight="9" refX="6" refY="3" orient="auto"><path d="M0,0 L6,3 L0,6 Z" fill="#dc2626"/></marker>
+</defs>
+
+<text x="40" y="32" font-size="19" font-weight="700" fill="#1a1a1a">pasu — AI 에이전트 2계층 egress 방어</text>
+<text x="40" y="53" font-size="12.5" fill="#555555">협조적 후킹(rig)을 우회해도 강제 가드(eBPF·kernel)는 못 뚫는다 — enforcing &gt; cooperative</text>
+
+<circle cx="556" cy="27" r="5" fill="#16a34a"/><text x="566" y="31" font-size="11" fill="#555555">허용</text>
+<circle cx="606" cy="27" r="5" fill="#dc2626"/><text x="616" y="31" font-size="11" fill="#555555">차단</text>
+
+<rect x="270" y="72" width="140" height="42" rx="8" fill="#ffffff" stroke="#9a9a9a"/>
+<text x="340" y="98" font-size="13" font-weight="600" text-anchor="middle" fill="#1a1a1a">AI Agent · rig</text>
+<line x1="340" y1="114" x2="340" y2="132" stroke="#555555" marker-end="url(#arr)"/>
+
+<rect x="40" y="134" width="600" height="118" rx="8" fill="#f4f4f3" stroke="#9a9a9a" stroke-dasharray="5 4"/>
+<text x="56" y="158" font-size="13" font-weight="700" fill="#c2410c">① rig 통합 · 협조적 가드 (in-process)</text>
+
+<rect x="60" y="170" width="262" height="66" rx="6" fill="#ffffff" stroke="#dddddd"/>
+<text x="74" y="191" font-size="12" font-weight="600" fill="#1a1a1a">AgentHook</text>
+<text x="74" y="209" font-size="11" fill="#555555">tool 가드 · HITL 승인</text>
+<text x="74" y="226" font-size="9.5" font-family="ui-monospace, monospace" fill="#8a8a8a">Flow: Continue / Skip / Approve</text>
+
+<rect x="338" y="170" width="262" height="66" rx="6" fill="#ffffff" stroke="#dddddd"/>
+<text x="352" y="191" font-size="12" font-weight="600" fill="#1a1a1a">HttpClientExt</text>
+<text x="352" y="209" font-size="11" fill="#555555">LLM egress 가드</text>
+<text x="352" y="226" font-size="9.5" font-family="ui-monospace, monospace" fill="#8a8a8a">reqwest-middleware · host allowlist</text>
+
+<path d="M150,236 L150,298" stroke="#dc2626" stroke-width="2" stroke-dasharray="5 4" fill="none" marker-end="url(#arrD)"/>
+<text x="162" y="274" font-size="11" font-weight="600" fill="#dc2626">tool 내부 reqwest (AgentHook 우회)</text>
+<text x="162" y="290" font-size="9.5" fill="#8a8a8a">후킹은 tool_name·args만 봄 → 내부 코드는 불가시</text>
+
+<rect x="40" y="298" width="600" height="104" rx="8" fill="#f4f4f3" stroke="#9a9a9a" stroke-width="2"/>
+<text x="56" y="322" font-size="13" font-weight="700" fill="#c2410c">② eBPF cgroup egress · 강제 가드 (kernel)</text>
+<rect x="60" y="334" width="540" height="56" rx="6" fill="#ffffff" stroke="#dddddd"/>
+<text x="74" y="356" font-size="10.5" font-family="ui-monospace, monospace" fill="#1a1a1a">cgroup_skb egress · connect4/6 · BLOCK map(목적지 IP) → drop</text>
+<text x="74" y="377" font-size="10" fill="#8a8a8a">언어무관 · 프로세스가 무슨 코드를 돌리든 커널에서 차단 (우회 불가)</text>
+
+<line x1="340" y1="402" x2="340" y2="428" stroke="#dc2626" stroke-width="2" marker-end="url(#arrD)"/>
+<rect x="250" y="428" width="180" height="38" rx="8" fill="#ffffff" stroke="#dc2626" stroke-width="1.5"/>
+<text x="340" y="452" font-size="13" font-weight="700" text-anchor="middle" fill="#dc2626">egress BLOCKED</text>
+
+<text x="40" y="496" font-size="10.5" fill="#8a8a8a">PoC 실측 (Lima VM · kernel 7.0):  [B] eBPF 없음 → HTTP 200 SUCCEEDED   ·   [A] eBPF cgroup block → BLOCKED</text>
+</svg>
