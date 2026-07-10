@@ -80,13 +80,19 @@ let hook = PasuSecurityHook::new(engine).with_sink(audit_sink);   // + .with_app
 agent.prompt("do the task").add_hook(hook).await?;
 ```
 
-Kernel egress guard on Linux — a **dedicated** cgroup (never the root cgroup):
+Kernel egress guard on Linux — **the same YAML**, lowered to the kernel
+allowlist (a **dedicated** cgroup; never the root cgroup):
 
 ```bash
-sudo pasu-egress --config /etc/pasu/egress.toml
-# or ad hoc:
+sudo pasu-daemon --policy rules.yaml --cgroup-path /sys/fs/cgroup/my-agent
+# lower-level loader (flags / TOML) if you don't want the policy file:
 sudo pasu-egress --cgroup-path /sys/fs/cgroup/my-agent --allow-domain api.openai.com
 ```
+
+Allow rules with an IPv4 become static entries, exact hostnames are resolved
+(and re-resolved), and suffix patterns (`.openai.com`) are reported — they stay
+hook-layer-only until DNS-response sniffing lands. The kernel side is
+default-deny, so lowering is only ever *narrower* than the policy.
 
 Approval + audit web UI:
 
@@ -123,14 +129,15 @@ Sidecar ([`deploy/docker-compose.yml`](deploy/docker-compose.yml)) and Kubernete
 | `pasu-ui` | lightweight web UI — HITL approvals (`/`) + audit dashboard (`/audit`) |
 | `pasu-audit` | audit sinks — JSONL (stderr / file / SIEM) and in-memory |
 | `pasu-egress` · `pasu-ebpf` · `pasu-ebpf-common` | kernel eBPF cgroup egress — default-deny allowlist, DNS-aware (Linux) |
+| `pasu-daemon` | composition root — lowers the policy YAML to the kernel guard (one policy, both layers) |
 
 Every crate depends only on `pasu-core` (acyclic); the rule format and framework
 integration are swappable behind traits.
 
 ## Numbers
 
-- **8 crates**, one acyclic core
-- **Tests**: 42 unit + eBPF end-to-end on a real kernel (GitHub runner + Lima VM)
+- **9 crates**, one acyclic core
+- **Tests**: 48 unit + eBPF end-to-end on a real kernel (GitHub runner + Lima VM)
 - **CI**: 3 jobs green — `check` (stable) · `eBPF build+unit` (nightly + bpf-linker) · `eBPF E2E` (privileged)
 - **Policy evaluation**: ~0.11–0.12 µs/decision (criterion) — effectively free next to a tool call
 - **default-deny allowlist**, **DNS-aware**, **HITL**, **JSONL audit**
@@ -147,10 +154,11 @@ MVP — the engine, policy, HITL, audit, deployment, and benchmarks are in place
 | approval + audit UI | ui | ✅ |
 | audit sinks (JSONL) | audit | ✅ |
 | config-driven daemon + systemd | egress + packaging | ✅ |
+| **one policy file → both layers** | daemon | ✅ |
 
-Next: precise DNS-response sniffing (toFQDN), eBPF-layer audit emission, a
-`pasu-daemon` crate with systemd-slice orchestration, and a crates.io release
-(rig is currently git-pinned).
+Next: precise DNS-response sniffing (toFQDN — unlocks suffix hosts in the
+kernel), eBPF-layer audit emission, a control-plane API + richer UI, and a
+crates.io release (rig is currently git-pinned).
 
 ## Development
 

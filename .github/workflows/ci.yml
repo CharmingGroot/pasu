@@ -43,9 +43,12 @@ jobs:
         run: cargo install bpf-linker --locked
       - uses: Swatinem/rust-cache@v2
       # builds the eBPF program (aya-build) and runs control-plane unit tests
-      # (EgressLayer); the cgroup E2E runs in the privileged ebpf-e2e job.
+      # (EgressLayer, daemon policy lowering); the cgroup E2E runs in the
+      # privileged ebpf-e2e job.
       - name: build + unit-test eBPF stack
-        run: cargo test -p pasu-egress --lib
+        run: |
+          cargo test -p pasu-egress --lib
+          cargo test -p pasu-daemon
 
   ebpf-e2e:
     name: eBPF E2E (linux)

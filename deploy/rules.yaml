@@ -1,0 +1,29 @@
+# Example pasu policy — ONE file for both layers.
+#
+# Your agent's rig hook evaluates this ruleset in-process (tool gate, HITL,
+# LLM egress), and `pasu-daemon --policy rules.yaml` lowers the same file to
+# the kernel eBPF allowlist (default-deny).
+rules:
+  # kernel-expressible: IPv4 literal -> static allow entry
+  - name: allow-dns
+    match: { host: "1.1.1.1" }
+    action: allow
+
+  # kernel-expressible: exact hostname -> resolved + re-resolved
+  - name: allow-llm
+    match: { host: "api.openai.com" }
+    action: allow
+
+  # hook-layer only (reported by the daemon): the kernel cannot enumerate a
+  # suffix until DNS-response sniffing lands
+  - name: allow-anthropic
+    match: { host: ".anthropic.com" }
+    action: allow
+
+  # hook-layer concepts — no kernel lowering needed (kernel is default-deny)
+  - name: confirm-transfer
+    match: { tool: transfer_funds }
+    action: ask
+    reason: "human approval for money movement"
+
+default: deny
