@@ -1,5 +1,5 @@
 <p align="center">
-  <!-- TODO(logo): drop your icon here, e.g. <img src="docs/logo.svg" width="120" alt="pasu"> -->
+  <img src="docs/logo.svg" width="112" alt="pasu — a gate that lets only the allowed flow through">
 </p>
 
 <h1 align="center">pasu &nbsp;<sub><sup>把守</sup></sub></h1>
@@ -158,6 +158,12 @@ Conventional Commits, DCO sign-off (`git commit -s`), feature branch → PR → 
 
 pasu is a security tool that runs in the kernel. Please report vulnerabilities
 privately — see [SECURITY.md](SECURITY.md).
+
+## Acknowledgements
+
+- Built with [rig](https://github.com/0xPlaygrounds/rig) (`rig-core`), licensed under MIT.
+- The policy syntax is inspired by [Falco](https://github.com/falcosecurity/falco)'s rule
+  format. pasu is not affiliated with or endorsed by the Falco project or the CNCF.
 
 ## License
 
