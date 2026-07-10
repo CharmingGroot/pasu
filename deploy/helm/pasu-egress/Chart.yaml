@@ -1,0 +1,15 @@
+apiVersion: v2
+name: pasu-egress
+description: Kernel eBPF egress guard for AI agents (pasu) — default-deny cgroup egress
+type: application
+version: 0.1.0
+appVersion: "0.1.0"
+home: https://github.com/CharmingGroot/pasu
+sources:
+  - https://github.com/CharmingGroot/pasu
+keywords:
+  - ebpf
+  - egress
+  - security
+  - ai-agents
+  - cgroup

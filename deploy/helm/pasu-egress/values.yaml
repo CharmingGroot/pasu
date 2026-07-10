@@ -1,0 +1,34 @@
+# pasu-egress Helm values.
+#
+# Runs one privileged pasu-egress pod per node (DaemonSet, Cilium/Falco-style)
+# that attaches the kernel guard to a DEDICATED cgroup your agent pods run under.
+
+image:
+  repository: ghcr.io/charminggroot/pasu-egress
+  tag: "" # defaults to the chart appVersion
+  pullPolicy: IfNotPresent
+
+# The cgroup subtree to guard. MUST be dedicated — never the root cgroup, or you
+# would default-deny the whole node's egress. Point your agent pods here via a
+# RuntimeClass / pod cgroup_parent, or set this to that slice.
+cgroupPath: /sys/fs/cgroup/agents.slice
+
+# Allowlist (lowered to the kernel ALLOW map).
+allowDomains: [] # e.g. ["api.openai.com"]
+allowIps: []     # e.g. ["1.1.1.1"]
+refreshSecs: 30
+
+# Control-plane admin socket (for the UI / live edits). Empty disables it.
+# When set, it's created under a hostPath dir so tools on the node can reach it.
+adminSocket: "" # e.g. /run/pasu/pasu.sock
+
+securityContext:
+  # The easy path. For least privilege set privileged: false and grant caps:
+  #   privileged: false
+  #   capabilities: { add: ["BPF", "NET_ADMIN", "PERFMON"] }
+  privileged: true
+
+resources: {}
+nodeSelector: {}
+tolerations:
+  - operator: Exists # run on every node, including control-plane
