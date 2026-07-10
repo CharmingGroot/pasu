@@ -94,6 +94,15 @@ Allow rules with an IPv4 become static entries, exact hostnames are resolved
 hook-layer-only until DNS-response sniffing lands. The kernel side is
 default-deny, so lowering is only ever *narrower* than the policy.
 
+Add `--admin-socket /run/pasu.sock` to inspect and edit the live guard without a
+restart (this is what the UI talks to):
+
+```bash
+echo status        | socat - UNIX-CONNECT:/run/pasu.sock   # {"cgroup_path":…,"allow_ips":[…]}
+echo 'allow 1.2.3.4' | socat - UNIX-CONNECT:/run/pasu.sock  # add to the kernel allowlist now
+echo 'deny 1.2.3.4'  | socat - UNIX-CONNECT:/run/pasu.sock  # remove it now
+```
+
 Approval + audit web UI:
 
 ```rust

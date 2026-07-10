@@ -25,6 +25,10 @@ struct Opt {
     /// Domain re-resolution interval, seconds.
     #[clap(long, default_value_t = 30)]
     refresh_secs: u64,
+    /// Serve the control-plane admin API on this unix socket (status + live
+    /// allow/deny). Omit to disable.
+    #[clap(long)]
+    admin_socket: Option<std::path::PathBuf>,
 }
 
 fn default_refresh_secs() -> u64 {
@@ -42,6 +46,8 @@ struct Config {
     allow_domain: Vec<String>,
     #[serde(default = "default_refresh_secs")]
     refresh_secs: u64,
+    #[serde(default)]
+    admin_socket: Option<std::path::PathBuf>,
 }
 
 impl Opt {
@@ -59,6 +65,7 @@ impl Opt {
                 allow: self.allow,
                 allow_domain: self.allow_domain,
                 refresh_secs: self.refresh_secs,
+                admin_socket: self.admin_socket,
             })
         }
     }
@@ -71,6 +78,7 @@ impl From<Config> for GuardConfig {
             allow: cfg.allow,
             allow_domain: cfg.allow_domain,
             refresh_secs: cfg.refresh_secs,
+            admin_socket: cfg.admin_socket,
         }
     }
 }

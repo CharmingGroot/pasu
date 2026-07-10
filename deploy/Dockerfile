@@ -37,10 +37,10 @@ RUN cargo build -p pasu-egress -p pasu-daemon --release
 ########## runtime ##########
 FROM debian:bookworm-slim AS runtime
 
-# ca-certificates for DNS/TLS metadata; curl + iproute2 make the image useful
-# for the demo / debugging. Drop them for a smaller production image.
+# ca-certificates for DNS/TLS metadata; curl + iproute2 + socat make the image
+# useful for the demo / admin CLI. Drop them for a smaller production image.
 RUN apt-get update \
- && apt-get install -y --no-install-recommends ca-certificates curl iproute2 \
+ && apt-get install -y --no-install-recommends ca-certificates curl iproute2 socat \
  && rm -rf /var/lib/apt/lists/*
 
 COPY --from=builder /src/target/release/pasu-egress /usr/local/bin/pasu-egress

@@ -23,6 +23,10 @@ struct Opt {
     /// Domain re-resolution interval, seconds.
     #[clap(long, default_value_t = 30)]
     refresh_secs: u64,
+    /// Serve the control-plane admin API on this unix socket (status + live
+    /// allow/deny). Omit to disable.
+    #[clap(long)]
+    admin_socket: Option<std::path::PathBuf>,
 }
 
 fn load(opt: Opt) -> anyhow::Result<GuardConfig> {
@@ -51,6 +55,7 @@ fn load(opt: Opt) -> anyhow::Result<GuardConfig> {
         allow: allowlist.ips,
         allow_domain: allowlist.domains,
         refresh_secs: opt.refresh_secs,
+        admin_socket: opt.admin_socket,
     })
 }
 
@@ -70,6 +75,7 @@ mod tests {
             policy: policy.to_path_buf(),
             cgroup_path: "/sys/fs/cgroup/pasu-agent".into(),
             refresh_secs: 30,
+            admin_socket: None,
         }
     }
 
