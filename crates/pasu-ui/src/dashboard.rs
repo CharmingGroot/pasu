@@ -8,15 +8,15 @@
 
 use std::path::PathBuf;
 
+use axum::Router;
 use axum::extract::{Form, State};
 use axum::response::{Html, Redirect};
 use axum::routing::{get, post};
-use axum::Router;
 use serde::Deserialize;
 use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
 use tokio::net::UnixStream;
 
-use crate::escape;
+use crate::{escape, page, verdict_pill};
 
 /// Client for the guard's admin unix socket.
 #[derive(Clone)]
@@ -130,8 +130,9 @@ async fn dashboard(State(ui): State<EgressUi>) -> Html<String> {
     let status_html = match ui.admin.status().await {
         Ok(s) => render_status(&s),
         Err(e) => format!(
-            "<p class=err>guard not reachable: {}</p>\
-             <p>start it with <code>--admin-socket &lt;path&gt;</code></p>",
+            "<div class=card><h2>kernel filter</h2>\
+             <div class=err-box>guard not reachable — {}<br>start it with \
+             <code>--admin-socket &lt;path&gt;</code></div></div>",
             escape(&e)
         ),
     };
@@ -140,55 +141,57 @@ async fn dashboard(State(ui): State<EgressUi>) -> Html<String> {
         .as_deref()
         .map(render_policy)
         .unwrap_or_default();
-    Html(format!(
-        "<!doctype html><meta charset=\"utf-8\">\
-         <meta http-equiv=\"refresh\" content=\"3\">\
-         <title>pasu — egress</title>\
-         <style>{STYLE}</style>\
-         <h1>pasu — egress guard</h1>\
-         <nav><a href=\"/\">approvals</a> · <a href=\"/audit\">audit</a> · <b>egress</b></nav>\
-         {status_html}{policy_html}"
-    ))
+    Html(page("/egress", &format!("{status_html}{policy_html}")))
 }
 
 fn render_status(s: &EgressStatus) -> String {
-    let ips: String = if s.allow_ips.is_empty() {
-        "<li class=muted>none — everything is dropped</li>".into()
+    let attached = if s.attached {
+        "<span class=\"pill pill-ok\">attached</span>"
     } else {
-        s.allow_ips
+        "<span class=\"pill pill-err\">detached</span>"
+    };
+    let ips = if s.allow_ips.is_empty() {
+        "<p class=empty>none — every outbound connection is dropped</p>".to_string()
+    } else {
+        let rows: String = s
+            .allow_ips
             .iter()
             .map(|ip| {
                 format!(
-                    "<li><code>{}</code>\
-                     <form method=post action=/egress/deny class=inline>\
+                    "<li class=row><span class=mono>{}</span>\
+                     <form class=row-form method=post action=/egress/deny>\
                      <input type=hidden name=ip value=\"{}\">\
-                     <button>remove</button></form></li>",
+                     <button class=\"btn btn-danger btn-sm\">remove</button></form></li>",
                     escape(ip),
                     escape(ip)
                 )
             })
-            .collect()
+            .collect();
+        format!("<ul class=list>{rows}</ul>")
     };
-    let domains: String = if s.allow_domains.is_empty() {
-        "<span class=muted>none</span>".into()
+    let domains = if s.allow_domains.is_empty() {
+        "<span class=muted>none</span>".to_string()
     } else {
         s.allow_domains
             .iter()
-            .map(|d| format!("<code>{}</code> ", escape(d)))
+            .map(|d| format!("<span class=chip>{}</span>", escape(d)))
             .collect()
     };
     format!(
-        "<div class=card>\
-         <h2>kernel filter</h2>\
-         <p>cgroup <code>{cg}</code> · attached <b>{att}</b> · domain refresh {rs}s</p>\
-         <h3>allowed IPs ({n})</h3><ul>{ips}</ul>\
-         <form method=post action=/egress/allow class=inline>\
-         <input name=ip placeholder=\"1.2.3.4\" required>\
-         <button>allow</button></form>\
-         <h3>allowed domains</h3><p>{domains}</p>\
-         </div>",
+        "<div class=card><h2>kernel filter</h2>\
+         <p class=sub>default-deny cgroup egress — only these destinations pass</p>\
+         <div class=tiles>\
+         <div class=tile><div class=k>cgroup</div><div class=v>{cg}</div></div>\
+         <div class=tile><div class=k>status</div><div class=v>{attached}</div></div>\
+         <div class=tile><div class=k>domain refresh</div><div class=v>{rs}s</div></div>\
+         </div></div>\
+         <div class=card><h2>allowed IPs <span class=count>({n})</span></h2>{ips}\
+         <form class=inline method=post action=/egress/allow>\
+         <input name=ip placeholder=\"add an IPv4 — e.g. 1.1.1.1\" required>\
+         <button class=\"btn btn-primary\">allow</button></form></div>\
+         <div class=card><h2>allowed domains</h2>\
+         <p class=sub>resolved to IPs and re-resolved on the refresh interval</p><div>{domains}</div></div>",
         cg = escape(&s.cgroup_path),
-        att = s.attached,
         rs = s.refresh_secs,
         n = s.allow_ips.len(),
     )
@@ -223,22 +226,18 @@ struct PRuleset {
 }
 
 fn render_policy(path: &std::path::Path) -> String {
+    let card = |inner: &str| format!("<div class=card><h2>policy <span class=count>(read-only)</span></h2><p class=sub>the same ruleset the agent's hook evaluates</p>{inner}</div>");
     let yaml = match std::fs::read_to_string(path) {
         Ok(y) => y,
-        Err(e) => {
-            return format!(
-                "<div class=card><h2>policy</h2><p class=err>{}</p></div>",
-                escape(&e.to_string())
-            )
-        }
+        Err(e) => return card(&format!("<div class=err-box>{}</div>", escape(&e.to_string()))),
     };
     let rs: PRuleset = match serde_yaml::from_str(&yaml) {
         Ok(r) => r,
         Err(e) => {
-            return format!(
-                "<div class=card><h2>policy</h2><p class=err>parse: {}</p></div>",
+            return card(&format!(
+                "<div class=err-box>parse: {}</div>",
                 escape(&e.to_string())
-            )
+            ));
         }
     };
     let rows: String = rs
@@ -246,50 +245,27 @@ fn render_policy(path: &std::path::Path) -> String {
         .iter()
         .map(|r| {
             let guard = match (&r.matcher.tool, &r.matcher.host) {
-                (Some(t), _) => format!("tool <code>{}</code>", escape(t)),
-                (_, Some(h)) => format!("host <code>{}</code>", escape(h)),
+                (Some(t), _) => format!("<span class=chip>tool: {}</span>", escape(t)),
+                (_, Some(h)) => format!("<span class=chip>host: {}</span>", escape(h)),
                 _ => "<span class=muted>—</span>".into(),
             };
             format!(
-                "<tr><td>{}</td><td>{}</td><td>{}</td><td>{}</td></tr>",
+                "<tr><td>{}</td><td>{}</td><td>{}</td><td class=muted>{}</td></tr>",
                 escape(&r.name),
                 guard,
-                verdict_badge(&r.action),
+                verdict_pill(&r.action),
                 r.reason.as_deref().map(escape).unwrap_or_default()
             )
         })
         .collect();
     let default = rs.default.as_deref().unwrap_or("deny");
-    format!(
-        "<div class=card><h2>policy (read-only)</h2>\
-         <table><tr><th>rule</th><th>guard</th><th>verdict</th><th>reason</th></tr>\
-         {rows}\
-         <tr class=muted><td>default</td><td>—</td><td>{}</td><td>fail-closed</td></tr>\
-         </table></div>",
-        verdict_badge(default)
-    )
+    let table = format!(
+        "<table><tr><th>rule</th><th>guard</th><th>verdict</th><th>reason</th></tr>{rows}\
+         <tr><td class=muted>default</td><td class=muted>—</td><td>{}</td><td class=muted>fail-closed</td></tr></table>",
+        verdict_pill(default)
+    );
+    card(&table)
 }
-
-fn verdict_badge(action: &str) -> String {
-    let cls = match action {
-        "allow" => "ok",
-        "deny" => "err",
-        "ask" => "ask",
-        _ => "muted",
-    };
-    format!("<span class=badge-{cls}>{}</span>", escape(action))
-}
-
-const STYLE: &str = "body{font-family:system-ui,sans-serif;max-width:720px;margin:2rem auto;padding:0 1rem;color:#1f2430}\
-h1{font-size:1.4rem}nav{margin:.5rem 0 1rem;color:#6b7488}nav a{color:#3f7ef7}\
-.card{border:1px solid #e2e5ee;border-radius:12px;padding:1rem 1.2rem;margin:1rem 0}\
-.inline{display:inline}code{background:#f2f3f8;padding:.1rem .3rem;border-radius:4px}\
-ul{list-style:none;padding:0}li{padding:.2rem 0}li form{margin-left:.5rem}\
-button{cursor:pointer;border:1px solid #c9d0e6;background:#fff;border-radius:6px;padding:.15rem .5rem}\
-input{border:1px solid #c9d0e6;border-radius:6px;padding:.2rem .4rem}\
-table{border-collapse:collapse;width:100%}th,td{text-align:left;padding:.3rem .5rem;border-bottom:1px solid #eef0f6}\
-.muted{color:#9aa1b2}.err{color:#c0333a}\
-.badge-ok{color:#1f7a4d;font-weight:600}.badge-err{color:#c0333a;font-weight:600}.badge-ask{color:#a9711b;font-weight:600}";
 
 #[cfg(test)]
 mod tests {
@@ -324,6 +300,7 @@ mod tests {
         assert!(html.contains("1.1.1.1"));
         assert!(html.contains("action=/egress/deny"));
         assert!(html.contains("action=/egress/allow"));
+        assert!(html.contains("pill-ok")); // attached badge
     }
 
     #[test]
@@ -338,9 +315,9 @@ mod tests {
         .unwrap();
         let html = render_policy(&p);
         assert!(html.contains("allow-llm"));
-        assert!(html.contains("badge-ok")); // allow
-        assert!(html.contains("badge-ask")); // ask
+        assert!(html.contains("pill-ok")); // allow
+        assert!(html.contains("pill-warn")); // ask
         assert!(html.contains("transfer_funds"));
-        assert!(html.contains("badge-err")); // default deny
+        assert!(html.contains("pill-err")); // default deny
     }
 }
