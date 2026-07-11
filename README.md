@@ -170,6 +170,16 @@ Sidecar ([`deploy/docker-compose.yml`](deploy/docker-compose.yml)) and Kubernete
 Every crate depends only on `pasu-core` (acyclic); the rule format and framework
 integration are swappable behind traits.
 
+## Dependencies
+
+Key dependencies are pinned for reproducibility:
+
+| dependency | version | license | why this version |
+|---|---|---|---|
+| [rig](https://github.com/0xPlaygrounds/rig) (`rig-core`) | git `747b95a6` | MIT | `AgentHook` is merged upstream but not yet in a published release; moves to crates.io at rig's next release |
+| [aya](https://github.com/aya-rs/aya) (+ `aya-log`, `aya-build`) | git `773ca715` | MIT / Apache-2.0 | pinned until aya's next crates.io release — unpinned git deps broke our CI once (upstream API drift) |
+| [Falco](https://github.com/falcosecurity/falco) | — | — | **not a dependency** — pasu borrows the *rule-format idea* only; no Falco code |
+
 ## Numbers
 
 - **9 crates**, one acyclic core
