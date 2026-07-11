@@ -64,7 +64,31 @@ Detailed design lives in `docs/` (positioning · architecture · repo-structure 
 - **DCO sign-off required**: `git commit -s`.
 - **No AI attribution**: do not add `Co-Authored-By: Claude` or similar. Contributions under your own name.
 - **Isolated scope**: one PR = one problem.
-- **All changes go feature branch → PR → CI green → merge.** No direct push to main. Commits/pushes/PRs go out externally, so confirm with the user first.
+- Commits/pushes/PRs go out externally, so **confirm with the user first**.
+
+### 5a. Branching model — `main` → release → feature
+
+Three tiers. Never commit directly to `main` or a release branch.
+
+- **`main`** — always releasable, protected. **Only the user merges a release
+  branch into `main`, manually, at a release point.** The agent never merges to
+  `main`.
+- **release branch** (`release/vX.Y`) — the integration branch for the next
+  release. Feature branches target it; it accumulates finished features until
+  the user cuts the release.
+- **feature branch** (`type/short-topic`, e.g. `feat/dns-sniffing`) — branch
+  **off the current release branch**, one problem each, PR **back into that
+  release branch** (not `main`).
+
+Flow for a feature:
+1. `git switch <release/vX.Y>` → `git switch -c feat/<topic>`.
+2. Implement + **tests** (see rule 3) until coverage is met — TP/TN pairs,
+   bypass test, fail-closed; the eBPF paths validated on a real kernel.
+3. Open a PR into `release/vX.Y`; CI must be green before merge.
+4. **The user decides release timing** and merges `release/vX.Y` → `main`.
+
+Stacked features: if B depends on A, base B on A's branch and note it in the PR;
+merge A first. Do **not** `--delete-branch` a branch another PR is based on.
 
 ### 6. Code style (Rust)
 
