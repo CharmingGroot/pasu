@@ -69,6 +69,22 @@ default: deny                        # fail-closed
 
 ## Quickstart
 
+### Wrap any agent — no code changes
+
+pasu is a **guard, not an agent**: it doesn't care what framework your agent
+uses. `pasu run` puts the command in a dedicated cgroup with the kernel guard
+attached before its first instruction:
+
+```bash
+sudo pasu run --policy rules.yaml -- python crew.py        # CrewAI / LangChain / anything
+sudo pasu run --policy rules.yaml -- npx some-agent "task" # language-agnostic
+```
+
+Everything the policy doesn't allow is dropped by the kernel — even if the
+agent (or a prompt-injected tool) opens its own sockets.
+
+### Deeper: in-process hooks (optional)
+
 Guard a rig agent (tool gate + HITL + LLM egress) with audit:
 
 ```rust
@@ -149,6 +165,7 @@ Sidecar ([`deploy/docker-compose.yml`](deploy/docker-compose.yml)) and Kubernete
 | `pasu-audit` | audit sinks — JSONL (stderr / file / SIEM) and in-memory |
 | `pasu-egress` · `pasu-ebpf` · `pasu-ebpf-common` | kernel eBPF cgroup egress — default-deny allowlist, DNS-aware (Linux) |
 | `pasu-daemon` | composition root — lowers the policy YAML to the kernel guard (one policy, both layers) |
+| `pasu-cli` | the `pasu` command — `pasu run` wraps any agent command in a guarded cgroup |
 
 Every crate depends only on `pasu-core` (acyclic); the rule format and framework
 integration are swappable behind traits.

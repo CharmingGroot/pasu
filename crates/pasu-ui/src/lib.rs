@@ -304,7 +304,8 @@ pub(crate) fn escape(s: &str) -> String {
 // --- shared design system (self-contained: no external assets) ---
 
 /// The pasu mark (gate + flows), inline so the UI has no external requests.
-pub(crate) const LOGO: &str = "<svg class=logo viewBox='0 0 200 200' xmlns='http://www.w3.org/2000/svg' aria-hidden=true>\
+pub(crate) const LOGO: &str =
+    "<svg class=logo viewBox='0 0 200 200' xmlns='http://www.w3.org/2000/svg' aria-hidden=true>\
 <rect width=200 height=200 rx=46 fill=#403aa8/>\
 <rect x=34 y=59 width=52 height=14 rx=7 fill=#6b74a0/>\
 <rect x=34 y=127 width=52 height=14 rx=7 fill=#6b74a0/>\

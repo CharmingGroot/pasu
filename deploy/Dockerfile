@@ -31,8 +31,8 @@ RUN cargo install bpf-linker --locked
 
 WORKDIR /src
 COPY . .
-# pasu-egress: flag/TOML-driven loader · pasu-daemon: policy-YAML-driven (one file, both layers)
-RUN cargo build -p pasu-egress -p pasu-daemon --release
+# pasu: wrap-any-agent CLI · pasu-egress: flag/TOML loader · pasu-daemon: policy daemon
+RUN cargo build -p pasu-egress -p pasu-daemon -p pasu-cli --release
 
 ########## runtime ##########
 FROM debian:bookworm-slim AS runtime
@@ -45,6 +45,7 @@ RUN apt-get update \
 
 COPY --from=builder /src/target/release/pasu-egress /usr/local/bin/pasu-egress
 COPY --from=builder /src/target/release/pasu-daemon /usr/local/bin/pasu-daemon
+COPY --from=builder /src/target/release/pasu /usr/local/bin/pasu
 
 # Args are passed at run time (see docs/deployment.md), e.g.:
 #   --cgroup-path /sys/fs/cgroup/pasu-agent --allow-domain api.openai.com

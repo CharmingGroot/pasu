@@ -8,10 +8,10 @@
 
 use std::path::PathBuf;
 
-use axum::Router;
 use axum::extract::{Form, State};
 use axum::response::{Html, Redirect};
 use axum::routing::{get, post};
+use axum::Router;
 use serde::Deserialize;
 use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
 use tokio::net::UnixStream;
@@ -226,10 +226,17 @@ struct PRuleset {
 }
 
 fn render_policy(path: &std::path::Path) -> String {
-    let card = |inner: &str| format!("<div class=card><h2>policy <span class=count>(read-only)</span></h2><p class=sub>the same ruleset the agent's hook evaluates</p>{inner}</div>");
+    let card = |inner: &str| {
+        format!("<div class=card><h2>policy <span class=count>(read-only)</span></h2><p class=sub>the same ruleset the agent's hook evaluates</p>{inner}</div>")
+    };
     let yaml = match std::fs::read_to_string(path) {
         Ok(y) => y,
-        Err(e) => return card(&format!("<div class=err-box>{}</div>", escape(&e.to_string()))),
+        Err(e) => {
+            return card(&format!(
+                "<div class=err-box>{}</div>",
+                escape(&e.to_string())
+            ))
+        }
     };
     let rs: PRuleset = match serde_yaml::from_str(&yaml) {
         Ok(r) => r,

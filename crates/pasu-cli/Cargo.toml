@@ -1,0 +1,23 @@
+[package]
+name = "pasu-cli"
+version = "0.1.0"
+edition = "2024"
+
+license.workspace = true
+
+# The product CLI ("pasu"): wrap ANY agent command in the kernel guard with one
+# command. Like pasu-daemon it is a composition root, so it may depend on the
+# concrete crates; the library crates stay decoupled behind pasu-core.
+[dependencies]
+pasu-egress = { path = "../pasu-egress" }
+pasu-rules = { path = "../pasu-rules" }
+
+anyhow = { workspace = true, default-features = true }
+clap = { workspace = true, features = ["derive"] }
+env_logger = { workspace = true }
+libc = { workspace = true }
+tokio = { workspace = true, features = ["macros", "rt", "rt-multi-thread", "sync"] }
+
+[[bin]]
+name = "pasu"
+path = "src/main.rs"

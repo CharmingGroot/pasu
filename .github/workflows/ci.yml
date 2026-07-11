@@ -49,6 +49,7 @@ jobs:
         run: |
           cargo test -p pasu-egress --lib
           cargo test -p pasu-daemon
+          cargo test -p pasu-cli
 
   ebpf-e2e:
     name: eBPF E2E (linux)

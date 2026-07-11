@@ -7,6 +7,17 @@ These rules take precedence over default behavior.
 
 Pasu is a Rust security guard for AI agents. Its core is a kernel **eBPF egress guard** (language-agnostic, enforcing), extended by a **rig integration** (a secure-by-default agent SDK). The differentiator is **enforcing** (the kernel actually blocks egress, unbypassable) rather than cooperative (only sees what is declared).
 
+**Concept (decided 2026-07-10): pasu is a GUARD APPLIANCE, not an agent.**
+- pasu never performs agent work; it wraps/controls agents. Do not add agent
+  capabilities (LLM calling, task execution) to pasu itself.
+- Adoption UX is **`pasu run -- <any agent command>`**: wrap any framework
+  (rig, LangChain, CrewAI, CLI agents) with zero code changes — the kernel
+  layer is framework/language-agnostic by construction.
+- In-process SDK hooks (`pasu-rig`, future adapters) are the *optional deeper*
+  integration, not the entry point. New framework support = a thin adapter that
+  maps that SDK's hook to pasu's core traits (never the other way around).
+- Positioning line: *"Don't trust your agent. Jail it."*
+
 Two layers:
 
 | Layer | Where | Role | crate |
