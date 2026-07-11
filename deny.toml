@@ -1,0 +1,38 @@
+# cargo-deny — supply-chain gate for a security tool.
+# Run locally: `cargo deny check`
+
+[advisories]
+# Fail on known vulnerabilities / unmaintained crates (RUSTSEC).
+version = 2
+yanked = "deny"
+
+[licenses]
+version = 2
+# Permissive licenses only — pasu is Apache-2.0 and links MIT/BSD deps.
+allow = [
+    "Apache-2.0",
+    "MIT",
+    "BSD-2-Clause",
+    "BSD-3-Clause",
+    "ISC",
+    "Unicode-3.0",
+    "Unicode-DFS-2016",
+    "Zlib",
+    "MPL-2.0",
+    "CDLA-Permissive-2.0",   # permissive data license (transitive dep)
+]
+confidence-threshold = 0.9
+
+[bans]
+# Flag multiple versions of the same crate (bloat / drift) as a warning.
+multiple-versions = "warn"
+wildcards = "warn"
+
+[sources]
+# We pin some deps to git (rig, aya) until their next crates.io release.
+unknown-registry = "deny"
+unknown-git = "deny"
+allow-git = [
+    "https://github.com/0xPlaygrounds/rig",
+    "https://github.com/aya-rs/aya",
+]
