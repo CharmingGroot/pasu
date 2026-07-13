@@ -5,8 +5,8 @@
 <h1 align="center">pasu &nbsp;<sub><sup>把守</sup></sub></h1>
 
 <p align="center">
-  <b>A security guard for AI agents — trust the policy, not the agent.</b><br>
-  Kernel-enforced egress control (eBPF) + a secure-by-default <a href="https://github.com/0xPlaygrounds/rig">rig</a> integration.
+  <b>A self-hosted security guard for AI agents — built for on-premises, air-gapped, and regulated environments.</b><br>
+  Layered defense — trace → tool-call guard → kernel-enforced egress — on a single Linux host. No Kubernetes, no cloud, nothing leaves your network.
 </p>
 
 <p align="center">
@@ -14,45 +14,81 @@
   <img src="https://img.shields.io/badge/license-Apache--2.0-blue.svg" alt="License: Apache-2.0">
   <img src="https://img.shields.io/badge/rust-edition%202021-orange.svg" alt="Rust">
   <img src="https://img.shields.io/badge/platform-Linux%20first-lightgrey.svg" alt="Platform: Linux first">
+  <img src="https://img.shields.io/badge/deploy-self--hosted%20%C2%B7%20air--gapped-2b6cb0.svg" alt="Self-hosted / air-gapped">
+  <img src="https://img.shields.io/badge/Kubernetes-not%20required-555.svg" alt="No Kubernetes required">
 </p>
 
-> **Control an agent's egress without trusting the agent.**
-> An in-process hook only sees what the agent *declares* — a tool that opens its
-> own socket walks right past it. pasu backs that cooperative layer with a
-> **kernel eBPF guard the agent cannot bypass**. **enforcing > cooperative.**
+<p align="center"><a href="README.ko.md">한국어</a></p>
+
+> **Control an agent's egress without trusting the agent — inside your own network.**
+> An in-process hook only sees what the agent *declares*; a tool that opens its own
+> socket walks right past it. pasu backs that cooperative layer with a **kernel eBPF
+> guard the agent cannot bypass**, and records every decision for audit. It runs
+> entirely on-host — nothing is sent to a SaaS. **enforcing > cooperative.**
 
 ---
 
 ## Why pasu
 
 AI agents get prompt-injected, and a compromised agent will happily exfiltrate
-your data. Framework-level guards are *cooperative*: they inspect declared tool
-calls and egress, but a tool running its own network code slips past them.
+your data. If you run agents **on-premises, air-gapped, or under compliance
+requirements**, two things follow: you often *cannot* route agent traffic to a
+cloud/SaaS guard, and you need **layered defense plus audit evidence** — not a
+single cooperative check that a rogue tool slips past.
 
-pasu runs **two layers that share one policy**:
+pasu is built for that setting: it runs entirely on one Linux host, needs **no
+Kubernetes and no external service**, and applies **three layers, one policy**:
 
 <p align="center">
-  <img src="docs/flow.svg" width="760" alt="pasu two-layer egress defense: one policy drives a cooperative rig hook and an enforcing kernel eBPF guard; a rogue egress that bypasses the hook is still dropped by the kernel">
+  <img src="docs/flow.svg" width="760" alt="pasu layered egress defense: one policy drives a cooperative rig hook and an enforcing kernel eBPF guard; a rogue egress that bypasses the hook is still dropped by the kernel, and every decision is recorded for audit">
 </p>
 
-- **① Cooperative — in-process (`pasu-rig`)**: tool-call gate + HITL approval, LLM egress by policy. Rich context; bypassable.
-- **② Enforcing — kernel (`pasu-egress` / `pasu-ebpf`)**: cgroup egress in the kernel. Language-agnostic, **unbypassable**.
+- **① Trace / audit** (`pasu-audit`): every decision is recorded — JSONL to a
+  file/SIEM, or OpenTelemetry (OTLP) spans to *your own* stack. Audit evidence
+  without anything leaving your network.
+- **② Tool-call guard — cooperative, in-process** (`pasu-rig`): gate declared
+  tool calls + human-in-the-loop approval, LLM egress by policy. Rich context;
+  bypassable on its own.
+- **③ Egress enforcement — kernel** (`pasu-egress` / `pasu-ebpf`): default-deny
+  cgroup egress in the kernel. Language-agnostic and **unbypassable** — it
+  catches whatever slips past layer ②.
 
 Proven end-to-end: a tool that bypasses the hook with its own `reqwest` is still
 **dropped by the kernel** (the eBPF + rig combo demo).
 
+## On-prem & regulated fit
+
+The uncommon part is the *combination*, on a single self-hosted box:
+
+- **No Kubernetes, no cloud.** One Linux host; a `.deb`-free single binary path
+  via `pasu run`. K8s-native network policy engines are powerful but heavy for a
+  single on-prem server; SaaS agent guards can't run inside an air-gapped network.
+- **Runs air-gapped.** No runtime call-home; telemetry export is opt-in and points
+  at *your* collector.
+- **Kernel-inline egress + agent intent + audit** together — most tools give you
+  one of the three.
+- **Apache-2.0**, auditable Rust, every crate behind traits.
+
+> Honest scope: pasu is an MVP and is **not** security-certified and has no
+> production references. It is a working, self-hostable reference for this niche —
+> not a turnkey certified appliance.
+
 ## How pasu compares
 
-| | **pasu** | framework wrappers | general policy engines |
-|---|:---:|:---:|:---:|
-| Kernel enforcing (unbypassable) | ✅ eBPF | ❌ cooperative | ~ (Falco = observe) |
-| Agent-SDK integration | ✅ rig | ✅ | ❌ |
-| Human-in-the-loop approval | ✅ | partial | ❌ |
-| Language-agnostic protection | ✅ | ❌ | ✅ |
-| Policy as code | ✅ YAML | partial | ✅ |
-| Rust · ~0.12 µs/decision | ✅ | — | — |
+Not a claim of global superiority — a fit for the **on-prem / regulated** axis,
+where the alternatives are heavier or can't run at all.
 
-The uncommon combination: **agent-SDK + kernel enforcing + HITL + audit, in Rust.**
+| | **pasu** | framework / SDK guards | K8s-native policy engines | SaaS agent guards |
+|---|:---:|:---:|:---:|:---:|
+| Runs on a single host, **no Kubernetes** | ✅ | ✅ | ❌ (needs K8s) | ✅ |
+| Runs **air-gapped** (no external service) | ✅ | ✅ | ✅ | ❌ |
+| Kernel-enforced egress (unbypassable) | ✅ eBPF | ❌ cooperative | ✅ | ~ |
+| Agent-intent context (tool calls, HITL) | ✅ | ✅ | ❌ | ✅ |
+| Audit trail (JSONL / OTLP to your stack) | ✅ | partial | ~ | ✅ (their cloud) |
+| Language / framework-agnostic | ✅ | ❌ | ✅ | ~ |
+
+The uncommon combination for a single self-hosted host: **kernel-inline egress +
+agent intent + audit** — with no Kubernetes and nothing leaving the network.
 
 ## Policy (Falco-inspired YAML)
 
@@ -162,7 +198,7 @@ Sidecar ([`deploy/docker-compose.yml`](deploy/docker-compose.yml)) and Kubernete
 | `pasu-rules` | `RuleEngine` — Falco-inspired YAML ruleset (allow/deny/ask, default fail-closed) |
 | `pasu-rig` | rig integration — `AgentHook` (tool gate + HITL), `HttpClientExt` (LLM egress) |
 | `pasu-ui` | lightweight web UI — HITL approvals (`/`) + audit dashboard (`/audit`) |
-| `pasu-audit` | audit sinks — JSONL (stderr / file / SIEM) and in-memory |
+| `pasu-audit` | audit sinks — JSONL (stderr / file / SIEM), in-memory, and OpenTelemetry (OTLP spans, `otel` feature) |
 | `pasu-egress` · `pasu-ebpf` · `pasu-ebpf-common` | kernel eBPF cgroup egress — default-deny allowlist, DNS-aware (Linux) |
 | `pasu-daemon` | composition root — lowers the policy YAML to the kernel guard (one policy, both layers) |
 | `pasu-cli` | the `pasu` command — `pasu run` wraps any agent command in a guarded cgroup |
@@ -182,11 +218,11 @@ Key dependencies are pinned for reproducibility:
 
 ## Numbers
 
-- **9 crates**, one acyclic core
-- **Tests**: 48 unit + eBPF end-to-end on a real kernel (GitHub runner + Lima VM)
-- **CI**: 3 jobs green — `check` (stable) · `eBPF build+unit` (nightly + bpf-linker) · `eBPF E2E` (privileged)
+- **10 crates**, one acyclic core (every crate depends only on `pasu-core`)
+- **Tests**: unit across the workspace + eBPF end-to-end on a real kernel (GitHub runner + Lima VM)
+- **CI**: 4 jobs green — `check` (stable) · `eBPF build+unit` (nightly + bpf-linker) · `eBPF E2E` (privileged) · `cargo-deny` (advisories/licenses/sources)
 - **Policy evaluation**: ~0.11–0.12 µs/decision (criterion) — effectively free next to a tool call
-- **default-deny allowlist**, **DNS-aware**, **HITL**, **JSONL audit**
+- **default-deny allowlist**, **DNS-aware**, **HITL**, **JSONL / OTLP audit**, **no Kubernetes**, **runs air-gapped**
 
 ## Status
 
@@ -215,8 +251,11 @@ cargo build -p pasu-egress   # eBPF stack — Linux only, nightly + bpf-linker
 
 ## Platform
 
-Linux first — eBPF kernel enforcement is Linux-only. macOS/Windows get the rig
-integration + UI (cooperative), without kernel enforcement.
+Linux first, **self-hosted, air-gapped-friendly** — eBPF kernel enforcement is
+Linux-only, on a single host, with no Kubernetes and no runtime call-home.
+Telemetry export (OTLP/JSONL) is opt-in and points at your own collector.
+macOS/Windows get the rig integration + UI (cooperative) for development, without
+kernel enforcement.
 
 ## Contributing
 
