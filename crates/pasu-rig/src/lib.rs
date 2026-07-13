@@ -17,7 +17,7 @@ pub use egress::PasuEgressMiddleware;
 
 use std::sync::Arc;
 
-use pasu_core::{AuditRecord, AuditSink, Event, EventKind, RuleEngine, Verdict};
+use pasu_core::{AuditSink, Event, EventKind, Guard, RuleEngine, Verdict};
 use rig::agent::{AgentHook, Flow, StepEvent};
 use rig::completion::CompletionModel;
 
@@ -37,10 +37,7 @@ pub use pasu_core::{Approver, DenyAll};
 ///
 /// `enabled` is the runtime toggle (build-time separation stays at the crate level).
 pub struct PasuSecurityHook<E: RuleEngine, A: Approver = DenyAll> {
-    engine: E,
-    approver: A,
-    enabled: bool,
-    sink: Option<Arc<dyn AuditSink>>,
+    guard: Guard<E, A>,
 }
 
 impl<E: RuleEngine> PasuSecurityHook<E, DenyAll> {
@@ -48,10 +45,7 @@ impl<E: RuleEngine> PasuSecurityHook<E, DenyAll> {
     /// until an approver is supplied via [`Self::with_approver`].
     pub fn new(engine: E) -> Self {
         Self {
-            engine,
-            approver: DenyAll,
-            enabled: true,
-            sink: None,
+            guard: Guard::new(engine, "rig-tool"),
         }
     }
 }
@@ -60,22 +54,19 @@ impl<E: RuleEngine, A: Approver> PasuSecurityHook<E, A> {
     /// Enabled hook with a human-approval path for `Ask` verdicts.
     pub fn with_approver(engine: E, approver: A) -> Self {
         Self {
-            engine,
-            approver,
-            enabled: true,
-            sink: None,
+            guard: Guard::with_approver(engine, approver, "rig-tool"),
         }
     }
 
     /// Attach an audit sink; every tool-call decision is recorded (layer "rig-tool").
     pub fn with_sink(mut self, sink: Arc<dyn AuditSink>) -> Self {
-        self.sink = Some(sink);
+        self.guard = self.guard.with_sink(sink);
         self
     }
 
     /// Runtime toggle. When disabled the hook passes everything through.
     pub fn set_enabled(&mut self, enabled: bool) {
-        self.enabled = enabled;
+        self.guard.set_enabled(enabled);
     }
 }
 
@@ -86,38 +77,25 @@ where
     A: Approver,
 {
     async fn on_event(&self, event: StepEvent<'_, M>) -> Flow {
-        if !self.enabled {
-            return Flow::cont();
-        }
+        // This adapter is thin by design: translate the rig event to a
+        // pasu Event and let the shared Guard decide (evaluate + audit + HITL).
         let StepEvent::ToolCall {
             tool_name, args, ..
         } = event
         else {
             return Flow::cont();
         };
-
         let event = Event {
             kind: EventKind::ToolCall {
                 name: tool_name.to_string(),
                 input: args.to_string(),
             },
         };
-
-        let verdict = self.engine.evaluate(&event);
-        if let Some(sink) = &self.sink {
-            sink.record(&AuditRecord::new("rig-tool", &event, &verdict));
-        }
-
-        match verdict {
+        match self.guard.decide(&event).await {
             Verdict::Allow => Flow::cont(),
             Verdict::Deny(reason) => Flow::skip(reason),
-            Verdict::Ask(reason) => {
-                if self.approver.approve(&reason).await {
-                    Flow::cont()
-                } else {
-                    Flow::skip(format!("denied by approver (HITL): {reason}"))
-                }
-            }
+            // Guard resolves Ask internally; it never surfaces here.
+            Verdict::Ask(reason) => Flow::skip(reason),
         }
     }
 }

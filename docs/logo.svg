@@ -1,0 +1,24 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 200 200" width="200" height="200" role="img" aria-label="pasu">
+  <title>pasu</title>
+  <desc>A gate that lets only the allowed flow through — the others are stopped.</desc>
+  <defs>
+    <linearGradient id="pasu-bg" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#403aa8"/>
+      <stop offset="1" stop-color="#252150"/>
+    </linearGradient>
+    <linearGradient id="pasu-flow" x1="0" y1="0" x2="1" y2="0">
+      <stop offset="0" stop-color="#5f9bff"/>
+      <stop offset="1" stop-color="#7fb0ff"/>
+    </linearGradient>
+  </defs>
+  <rect width="200" height="200" rx="46" fill="url(#pasu-bg)"/>
+  <!-- blocked flows: stop at the gate -->
+  <rect x="34" y="59" width="52" height="14" rx="7" fill="#6b74a0"/>
+  <rect x="34" y="127" width="52" height="14" rx="7" fill="#6b74a0"/>
+  <!-- allowed flow: passes through the opening -->
+  <rect x="34" y="93" width="122" height="14" rx="7" fill="url(#pasu-flow)"/>
+  <path d="M153 90 L178 100 L153 110 Z" fill="#7fb0ff"/>
+  <!-- gate wall, open only at the middle lane -->
+  <rect x="88" y="46" width="16" height="46" rx="6" fill="#e2e6ff"/>
+  <rect x="88" y="108" width="16" height="46" rx="6" fill="#e2e6ff"/>
+</svg>

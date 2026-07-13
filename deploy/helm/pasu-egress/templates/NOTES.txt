@@ -1,0 +1,24 @@
+pasu-egress is installed as a DaemonSet.
+
+It guards the cgroup subtree:
+    {{ .Values.cgroupPath }}
+
+Make sure your agent pods actually run under that cgroup (e.g. via a
+RuntimeClass or a pod cgroup_parent). Anything egressing from there that is not
+allow-listed is dropped by the kernel.
+
+Allowlist:
+  domains: {{ if .Values.allowDomains }}{{ join ", " .Values.allowDomains }}{{ else }}(none){{ end }}
+  ips:     {{ if .Values.allowIps }}{{ join ", " .Values.allowIps }}{{ else }}(none){{ end }}
+
+{{- if .Values.adminSocket }}
+
+Control-plane admin socket: {{ .Values.adminSocket }} (on each node).
+Point the pasu UI at it for live inspection / allowlist edits.
+{{- else }}
+
+Tip: set `adminSocket` to enable live inspection + allowlist edits from the UI.
+{{- end }}
+
+⚠  This is a security tool running in the kernel — verify cgroupPath is a
+   dedicated slice, never the node root.

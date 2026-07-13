@@ -7,6 +7,17 @@ These rules take precedence over default behavior.
 
 Pasu is a Rust security guard for AI agents. Its core is a kernel **eBPF egress guard** (language-agnostic, enforcing), extended by a **rig integration** (a secure-by-default agent SDK). The differentiator is **enforcing** (the kernel actually blocks egress, unbypassable) rather than cooperative (only sees what is declared).
 
+**Concept (decided 2026-07-10): pasu is a GUARD APPLIANCE, not an agent.**
+- pasu never performs agent work; it wraps/controls agents. Do not add agent
+  capabilities (LLM calling, task execution) to pasu itself.
+- Adoption UX is **`pasu run -- <any agent command>`**: wrap any framework
+  (rig, LangChain, CrewAI, CLI agents) with zero code changes — the kernel
+  layer is framework/language-agnostic by construction.
+- In-process SDK hooks (`pasu-rig`, future adapters) are the *optional deeper*
+  integration, not the entry point. New framework support = a thin adapter that
+  maps that SDK's hook to pasu's core traits (never the other way around).
+- Positioning line: *"Don't trust your agent. Jail it."*
+
 Two layers:
 
 | Layer | Where | Role | crate |
@@ -53,7 +64,31 @@ Detailed design lives in `docs/` (positioning · architecture · repo-structure 
 - **DCO sign-off required**: `git commit -s`.
 - **No AI attribution**: do not add `Co-Authored-By: Claude` or similar. Contributions under your own name.
 - **Isolated scope**: one PR = one problem.
-- **All changes go feature branch → PR → CI green → merge.** No direct push to main. Commits/pushes/PRs go out externally, so confirm with the user first.
+- Commits/pushes/PRs go out externally, so **confirm with the user first**.
+
+### 5a. Branching model — `main` → release → feature
+
+Three tiers. Never commit directly to `main` or a release branch.
+
+- **`main`** — always releasable, protected. **Only the user merges a release
+  branch into `main`, manually, at a release point.** The agent never merges to
+  `main`.
+- **release branch** (`release/vX.Y`) — the integration branch for the next
+  release. Feature branches target it; it accumulates finished features until
+  the user cuts the release.
+- **feature branch** (`type/short-topic`, e.g. `feat/dns-sniffing`) — branch
+  **off the current release branch**, one problem each, PR **back into that
+  release branch** (not `main`).
+
+Flow for a feature:
+1. `git switch <release/vX.Y>` → `git switch -c feat/<topic>`.
+2. Implement + **tests** (see rule 3) until coverage is met — TP/TN pairs,
+   bypass test, fail-closed; the eBPF paths validated on a real kernel.
+3. Open a PR into `release/vX.Y`; CI must be green before merge.
+4. **The user decides release timing** and merges `release/vX.Y` → `main`.
+
+Stacked features: if B depends on A, base B on A's branch and note it in the PR;
+merge A first. Do **not** `--delete-branch` a branch another PR is based on.
 
 ### 6. Code style (Rust)
 

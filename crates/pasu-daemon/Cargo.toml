@@ -1,0 +1,19 @@
+[package]
+name = "pasu-daemon"
+version = "0.1.0"
+edition = "2024"
+
+license.workspace = true
+
+# The composition root for "one policy file, two layers": it reads the same
+# rules YAML the rig hook evaluates and lowers it to the kernel egress guard.
+# As the app-level binary it may depend on concrete crates (pasu-rules,
+# pasu-egress); the library crates themselves stay decoupled behind pasu-core.
+[dependencies]
+pasu-egress = { path = "../pasu-egress" }
+pasu-rules = { path = "../pasu-rules" }
+
+anyhow = { workspace = true, default-features = true }
+clap = { workspace = true, features = ["derive"] }
+env_logger = { workspace = true }
+tokio = { workspace = true, features = ["macros", "rt", "rt-multi-thread"] }

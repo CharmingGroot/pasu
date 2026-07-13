@@ -6,7 +6,12 @@
 //! view — the seam where a DNS-aware resolver or a userspace fallback will plug
 //! in. Design: docs/architecture.md, docs/repo-structure.md
 //!
-//! The eBPF loader binary lives in `main.rs`.
+//! The eBPF loader binary lives in `main.rs`; the reusable guard (load /
+//! populate / attach / hold) lives in [`guard`], and its control-plane admin
+//! protocol in [`admin`].
+
+pub mod admin;
+pub mod guard;
 
 use pasu_core::{Event, EventKind, Layer, RuleEngine, Verdict};
 

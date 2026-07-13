@@ -1,0 +1,68 @@
+{{- if eq .Values.cgroupPath "/sys/fs/cgroup" }}
+{{- fail "cgroupPath must be a DEDICATED cgroup, never the root /sys/fs/cgroup (that would default-deny the whole node's egress)." }}
+{{- end }}
+apiVersion: apps/v1
+kind: DaemonSet
+metadata:
+  name: {{ include "pasu-egress.name" . }}
+  labels:
+    {{- include "pasu-egress.labels" . | nindent 4 }}
+spec:
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: {{ include "pasu-egress.name" . }}
+      app.kubernetes.io/instance: {{ .Release.Name }}
+  template:
+    metadata:
+      labels:
+        {{- include "pasu-egress.labels" . | nindent 8 }}
+    spec:
+      hostPID: true
+      containers:
+        - name: pasu-egress
+          image: "{{ .Values.image.repository }}:{{ .Values.image.tag | default .Chart.AppVersion }}"
+          imagePullPolicy: {{ .Values.image.pullPolicy }}
+          args:
+            - "--cgroup-path={{ .Values.cgroupPath }}"
+            - "--refresh-secs={{ .Values.refreshSecs }}"
+            {{- range .Values.allowDomains }}
+            - "--allow-domain={{ . }}"
+            {{- end }}
+            {{- range .Values.allowIps }}
+            - "--allow={{ . }}"
+            {{- end }}
+            {{- if .Values.adminSocket }}
+            - "--admin-socket={{ .Values.adminSocket }}"
+            {{- end }}
+          securityContext:
+            {{- toYaml .Values.securityContext | nindent 12 }}
+          volumeMounts:
+            - name: cgroup
+              mountPath: /sys/fs/cgroup
+            {{- if .Values.adminSocket }}
+            - name: admin
+              mountPath: {{ dir .Values.adminSocket }}
+            {{- end }}
+          {{- with .Values.resources }}
+          resources:
+            {{- toYaml . | nindent 12 }}
+          {{- end }}
+      volumes:
+        - name: cgroup
+          hostPath:
+            path: /sys/fs/cgroup
+            type: Directory
+        {{- if .Values.adminSocket }}
+        - name: admin
+          hostPath:
+            path: {{ dir .Values.adminSocket }}
+            type: DirectoryOrCreate
+        {{- end }}
+      {{- with .Values.nodeSelector }}
+      nodeSelector:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.tolerations }}
+      tolerations:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}

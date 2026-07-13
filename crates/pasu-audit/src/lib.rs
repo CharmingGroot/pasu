@@ -6,7 +6,16 @@
 //!     a file, a pipe to a SIEM).
 //!   - [`MemorySink`] — collects records in memory (tests, or a UI buffer).
 //!
+//!   - [`OtelSink`]   — export each record as an OpenTelemetry span (OTLP),
+//!     behind the `otel` feature. pasu exports to your standard observability
+//!     stack rather than growing its own dashboard.
+//!
 //! Design: roadmap.md (M5 observability).
+
+#[cfg(feature = "otel")]
+pub mod otel;
+#[cfg(feature = "otel")]
+pub use otel::OtelSink;
 
 use std::io::Write;
 use std::sync::Mutex;

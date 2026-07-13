@@ -8,6 +8,8 @@ repository.workspace = true
 [dependencies]
 pasu-core = { path = "../pasu-core" }
 serde = { workspace = true }
+serde_json = { workspace = true }
+serde_yaml = "0.9"
 axum = "0.7"
 tokio = { workspace = true, features = [
     "rt-multi-thread",
@@ -15,6 +17,7 @@ tokio = { workspace = true, features = [
     "sync",
     "time",
     "net",
+    "io-util",
 ] }
 
 [dev-dependencies]

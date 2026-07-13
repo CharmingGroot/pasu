@@ -10,6 +10,8 @@
 //! the trait's callers (pasu-rig, pasu-egress) decoupled from the rule format —
 //! swap this for OPA / a DSL later without touching them. Design: docs/rules.md
 
+use std::net::Ipv4Addr;
+
 use pasu_core::{Event, EventKind, RuleEngine, Verdict};
 use serde::Deserialize;
 
@@ -56,6 +58,88 @@ pub struct Ruleset {
     /// Action when no rule matches. Defaults to `deny` (fail-closed).
     #[serde(default = "default_action")]
     pub default: Action,
+}
+
+/// The kernel-enforceable part of a ruleset: the egress allowlist derived from
+/// its `allow` rules. This is how "one policy file" reaches the eBPF layer —
+/// the same YAML the rig hook evaluates is *lowered* to the kernel's
+/// default-deny allowlist.
+#[derive(Debug, Default, PartialEq)]
+pub struct EgressAllowlist {
+    /// Host entries that parse as IPv4 — injected as static allow entries.
+    pub ips: Vec<Ipv4Addr>,
+    /// Exact hostnames — resolved (and periodically re-resolved) to IPv4s.
+    pub domains: Vec<String>,
+    /// Allow rules the kernel layer cannot express, with the reason. These stay
+    /// enforced at the hook layer only — surface them to the operator.
+    pub skipped: Vec<SkippedRule>,
+}
+
+/// An allow rule that could not be lowered to the kernel layer.
+#[derive(Debug, PartialEq)]
+pub struct SkippedRule {
+    pub rule: String,
+    pub reason: String,
+}
+
+/// A ruleset whose `default` is `allow` cannot be lowered: the kernel layer is
+/// default-deny, and silently enforcing deny would invert the operator's policy.
+#[derive(Debug, PartialEq)]
+pub struct DefaultAllowError;
+
+impl std::fmt::Display for DefaultAllowError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(
+            f,
+            "policy default is `allow`, but the kernel egress layer is default-deny; \
+             set `default: deny` (fail-closed) to run it"
+        )
+    }
+}
+
+impl std::error::Error for DefaultAllowError {}
+
+const SUFFIX_SKIP_REASON: &str = "suffix host patterns cannot be enumerated in the kernel \
+     (needs DNS-response sniffing); enforced at the hook layer only";
+
+impl Ruleset {
+    /// Load a ruleset from YAML (the same document `RulesetEngine::from_yaml` reads).
+    pub fn from_yaml(yaml: &str) -> Result<Self, serde_yaml::Error> {
+        serde_yaml::from_str(yaml)
+    }
+
+    /// Lower this ruleset to the kernel egress allowlist.
+    ///
+    /// Only `allow` rules with a `host` matcher participate: an IPv4 literal
+    /// becomes a static allow, an exact hostname becomes a DNS-resolved allow,
+    /// and a `.suffix` pattern is reported as skipped (the kernel cannot
+    /// enumerate it). `deny`/`ask` rules need no lowering — the kernel is
+    /// default-deny, so anything not allowed is already dropped.
+    pub fn egress_allowlist(&self) -> Result<EgressAllowlist, DefaultAllowError> {
+        if matches!(self.default, Action::Allow) {
+            return Err(DefaultAllowError);
+        }
+        let mut out = EgressAllowlist::default();
+        for rule in &self.rules {
+            if !matches!(rule.action, Action::Allow) {
+                continue;
+            }
+            let Some(host) = rule.matcher.host.as_deref() else {
+                continue; // tool-only rule: nothing to lower
+            };
+            if host.starts_with('.') {
+                out.skipped.push(SkippedRule {
+                    rule: rule.name.clone(),
+                    reason: SUFFIX_SKIP_REASON.to_string(),
+                });
+            } else if let Ok(ip) = host.parse::<Ipv4Addr>() {
+                out.ips.push(ip);
+            } else {
+                out.domains.push(host.to_string());
+            }
+        }
+        Ok(out)
+    }
 }
 
 impl Match {
@@ -210,5 +294,74 @@ default: deny
     fn empty_ruleset_defaults_to_deny() {
         let e = RulesetEngine::from_yaml("rules: []").unwrap();
         assert!(matches!(e.evaluate(&tool("anything")), Verdict::Deny(_)));
+    }
+
+    // --- egress_allowlist: lowering the same YAML to the kernel layer ---
+
+    #[test]
+    fn lowers_ip_exact_host_and_suffix_allow_rules() {
+        let rs = Ruleset::from_yaml(
+            r#"
+rules:
+  - name: allow-dns
+    match: { host: "1.1.1.1" }
+    action: allow
+  - name: allow-llm
+    match: { host: "api.openai.com" }
+    action: allow
+  - name: allow-suffix
+    match: { host: ".anthropic.com" }
+    action: allow
+default: deny
+"#,
+        )
+        .unwrap();
+        let out = rs.egress_allowlist().unwrap();
+        assert_eq!(out.ips, vec![Ipv4Addr::new(1, 1, 1, 1)]);
+        assert_eq!(out.domains, vec!["api.openai.com".to_string()]);
+        assert_eq!(out.skipped.len(), 1);
+        assert_eq!(out.skipped[0].rule, "allow-suffix");
+    }
+
+    #[test]
+    fn deny_ask_and_tool_only_rules_do_not_lower() {
+        // TN pair: nothing here may widen the kernel allowlist.
+        let rs = Ruleset::from_yaml(
+            r#"
+rules:
+  - name: deny-exfil
+    match: { host: "evil.example" }
+    action: deny
+  - name: ask-host
+    match: { host: "review.example" }
+    action: ask
+  - name: allow-tool
+    match: { tool: "read_file" }
+    action: allow
+default: deny
+"#,
+        )
+        .unwrap();
+        let out = rs.egress_allowlist().unwrap();
+        assert_eq!(out, EgressAllowlist::default());
+    }
+
+    #[test]
+    fn tool_scoped_host_allow_still_lowers() {
+        // A rule with both matchers allows the host for ANY egress event (the
+        // matcher is per-event-kind), so the kernel entry is not a widening.
+        let rs = Ruleset::from_yaml(
+            "rules:\n  - name: combo\n    match: { tool: fetch, host: \"api.example\" }\n    action: allow\ndefault: deny",
+        )
+        .unwrap();
+        let out = rs.egress_allowlist().unwrap();
+        assert_eq!(out.domains, vec!["api.example".to_string()]);
+    }
+
+    #[test]
+    fn default_allow_refuses_to_lower() {
+        // fail-closed: the kernel layer cannot express a default-allow policy.
+        let rs = Ruleset::from_yaml("rules: []\ndefault: allow").unwrap();
+        assert_eq!(rs.egress_allowlist(), Err(DefaultAllowError));
     }
 }

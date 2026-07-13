@@ -1,0 +1,33 @@
+# pasu-egress as a per-pod sidecar (guards one workload).
+#
+# Pod containers share the pod's cgroup, so a privileged sidecar can attach the
+# kernel guard to it. With a per-pod cgroup namespace, the sidecar sees the pod
+# cgroup as /sys/fs/cgroup, so it attaches there (default-deny for the pod).
+#
+# This is an EXAMPLE (not validated against a live cluster). Adjust the image,
+# allowlist, and — depending on your runtime's cgroup layout — the attach path.
+apiVersion: v1
+kind: Pod
+metadata:
+  name: agent-guarded
+  labels: { app: agent-guarded }
+spec:
+  shareProcessNamespace: true
+  containers:
+    - name: agent
+      image: your-registry/your-agent:latest
+      # ... your agent (rig + pasu-rig for the cooperative layer) ...
+
+    - name: pasu-egress
+      image: your-registry/pasu-egress:latest
+      args:
+        - "--cgroup-path=/sys/fs/cgroup"      # the pod cgroup (per-pod cgroupns)
+        - "--allow-domain=api.openai.com"
+      securityContext:
+        privileged: true                       # or capabilities: add [BPF, NET_ADMIN, PERFMON]
+      volumeMounts:
+        - name: cgroup
+          mountPath: /sys/fs/cgroup
+  volumes:
+    - name: cgroup
+      hostPath: { path: /sys/fs/cgroup, type: Directory }

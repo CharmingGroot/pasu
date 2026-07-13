@@ -2,7 +2,7 @@ name: ci
 
 on:
   push:
-    branches: [main]
+    branches: [main, "release/**"]
   pull_request:
 
 permissions:
@@ -30,6 +30,9 @@ jobs:
         run: cargo clippy --all-targets -- -D warnings
       - name: test
         run: cargo test
+      # optional OTLP verdict export (feature-gated; keeps the default build pure)
+      - name: otel feature (build + unit)
+        run: cargo test -p pasu-audit --features otel
 
   ebpf:
     name: eBPF build + unit (linux)
@@ -43,9 +46,13 @@ jobs:
         run: cargo install bpf-linker --locked
       - uses: Swatinem/rust-cache@v2
       # builds the eBPF program (aya-build) and runs control-plane unit tests
-      # (EgressLayer); the cgroup E2E runs in the privileged ebpf-e2e job.
+      # (EgressLayer, daemon policy lowering); the cgroup E2E runs in the
+      # privileged ebpf-e2e job.
       - name: build + unit-test eBPF stack
-        run: cargo test -p pasu-egress --lib
+        run: |
+          cargo test -p pasu-egress --lib
+          cargo test -p pasu-daemon
+          cargo test -p pasu-cli
 
   ebpf-e2e:
     name: eBPF E2E (linux)
@@ -68,8 +75,16 @@ jobs:
             PASU_E2E_KERNEL=1 \
             cargo test -p pasu-egress --test egress_e2e -- --test-threads=1 --nocapture
 
+  supply-chain:
+    name: cargo-deny (advisories · licenses · sources)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: EmbarkStudios/cargo-deny-action@v2
+        with:
+          command: check advisories licenses bans sources
+
   # Added incrementally (design: docs/ci.md):
   #  - eBPF kernel-version matrix (5.15 / 6.x / 7.x)
-  #  - security: cargo-audit / cargo-deny (dependency vulns / licenses)
   #  - platform: rig integration on macOS/Windows (no eBPF)
   #  - release: SLSA provenance (at first release)

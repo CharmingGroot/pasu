@@ -8,3 +8,20 @@ repository.workspace = true
 [dependencies]
 pasu-core = { path = "../pasu-core" }
 serde_json = "1"
+log = { workspace = true }
+
+# OpenTelemetry export is heavy and optional — gated behind `otel` so the
+# default build stays pure stable (mirrors the rig/egress isolation pattern).
+opentelemetry = { version = "0.27", optional = true }
+opentelemetry_sdk = { version = "0.27", optional = true, features = ["rt-tokio"] }
+opentelemetry-otlp = { version = "0.27", optional = true, features = ["grpc-tonic"] }
+
+[features]
+otel = ["dep:opentelemetry", "dep:opentelemetry_sdk", "dep:opentelemetry-otlp"]
+
+[dev-dependencies]
+tokio = { workspace = true, features = ["rt-multi-thread", "macros", "time"] }
+
+[[example]]
+name = "otel_demo"
+required-features = ["otel"]

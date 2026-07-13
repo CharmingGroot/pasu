@@ -1,0 +1,40 @@
+# pasu-egress as a node-level DaemonSet (Cilium/Falco-style).
+#
+# One privileged pod per node attaches the kernel guard to a cgroup on the host.
+# Point --cgroup-path at the subtree you want to guard — e.g. a dedicated slice
+# your agent pods run under (via a RuntimeClass / cgroup_parent), so you do NOT
+# default-deny all of kubepods. Guarding the wrong (parent) cgroup can cut the
+# node's own egress — pick a DEDICATED cgroup.
+#
+# This is an EXAMPLE/skeleton (not validated against a live cluster).
+apiVersion: apps/v1
+kind: DaemonSet
+metadata:
+  name: pasu-egress
+  namespace: kube-system
+  labels: { app: pasu-egress }
+spec:
+  selector:
+    matchLabels: { app: pasu-egress }
+  template:
+    metadata:
+      labels: { app: pasu-egress }
+    spec:
+      hostPID: true
+      containers:
+        - name: pasu-egress
+          image: your-registry/pasu-egress:latest
+          args:
+            # a DEDICATED slice your agent pods run under — not all of kubepods
+            - "--cgroup-path=/sys/fs/cgroup/agents.slice"
+            - "--allow-domain=api.openai.com"
+          securityContext:
+            privileged: true                   # or capabilities: add [BPF, NET_ADMIN, PERFMON]
+          volumeMounts:
+            - name: cgroup
+              mountPath: /sys/fs/cgroup
+      volumes:
+        - name: cgroup
+          hostPath: { path: /sys/fs/cgroup, type: Directory }
+      tolerations:
+        - operator: Exists                     # run on every node

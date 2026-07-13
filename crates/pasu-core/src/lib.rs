@@ -113,6 +113,87 @@ pub trait AuditSink: Send + Sync {
     fn record(&self, record: &AuditRecord);
 }
 
+/// The guard core: the one place that turns an [`Event`] into a final
+/// [`Verdict`] — evaluate → audit → resolve `Ask` via the [`Approver`].
+///
+/// This is the framework-agnostic **port** every adapter calls. A rig hook, a
+/// Python client over the wire, or any future SDK adapter maps its native event
+/// onto [`Event`] and calls [`Guard::decide`]; none of them re-implement the
+/// evaluate/HITL/audit orchestration. Keeping it here (not in an adapter) is
+/// what makes new frameworks a thin translation layer.
+pub struct Guard<E: RuleEngine, A: Approver = DenyAll> {
+    engine: E,
+    approver: A,
+    sink: Option<std::sync::Arc<dyn AuditSink>>,
+    enabled: bool,
+    layer: String,
+}
+
+impl<E: RuleEngine> Guard<E, DenyAll> {
+    /// A guard backed by `engine`. `Ask` is denied (fail-closed) until an
+    /// approver is supplied. `layer` labels emitted audit records.
+    pub fn new(engine: E, layer: impl Into<String>) -> Self {
+        Self {
+            engine,
+            approver: DenyAll,
+            sink: None,
+            enabled: true,
+            layer: layer.into(),
+        }
+    }
+}
+
+impl<E: RuleEngine, A: Approver> Guard<E, A> {
+    /// A guard with a human-approval path for `Ask` verdicts.
+    pub fn with_approver(engine: E, approver: A, layer: impl Into<String>) -> Self {
+        Self {
+            engine,
+            approver,
+            sink: None,
+            enabled: true,
+            layer: layer.into(),
+        }
+    }
+
+    /// Record every decision to `sink`.
+    pub fn with_sink(mut self, sink: std::sync::Arc<dyn AuditSink>) -> Self {
+        self.sink = Some(sink);
+        self
+    }
+
+    /// Runtime toggle. When disabled, `decide` allows everything.
+    pub fn set_enabled(&mut self, enabled: bool) {
+        self.enabled = enabled;
+    }
+
+    pub fn enabled(&self) -> bool {
+        self.enabled
+    }
+
+    /// Decide an event: evaluate the policy, record it, and resolve `Ask`
+    /// through the approver (approved → `Allow`, else fail-closed `Deny`).
+    /// The returned verdict is final — callers only see `Allow` / `Deny`.
+    pub async fn decide(&self, event: &Event) -> Verdict {
+        if !self.enabled {
+            return Verdict::Allow;
+        }
+        let verdict = self.engine.evaluate(event);
+        if let Some(sink) = &self.sink {
+            sink.record(&AuditRecord::new(&self.layer, event, &verdict));
+        }
+        match verdict {
+            Verdict::Ask(reason) => {
+                if self.approver.approve(&reason).await {
+                    Verdict::Allow
+                } else {
+                    Verdict::Deny(format!("denied by approver (HITL): {reason}"))
+                }
+            }
+            other => other,
+        }
+    }
+}
+
 impl Verdict {
     /// Escalate to the more restrictive verdict: deny > ask > allow.
     /// When several layers/rules match, pick the strongest block.
@@ -218,6 +299,73 @@ mod tests {
         assert_eq!(rec.subject, "rm_rf");
         assert_eq!(rec.verdict, VerdictKind::Deny);
         assert_eq!(rec.reason.as_deref(), Some("destructive"));
+    }
+
+    struct FixedEngine(Verdict);
+    impl RuleEngine for FixedEngine {
+        fn evaluate(&self, _e: &Event) -> Verdict {
+            self.0.clone()
+        }
+    }
+    struct YesApprover;
+    impl Approver for YesApprover {
+        fn approve(&self, _r: &str) -> impl core::future::Future<Output = bool> + Send {
+            core::future::ready(true)
+        }
+    }
+    fn tool_event() -> Event {
+        Event {
+            kind: EventKind::ToolCall {
+                name: "t".into(),
+                input: "{}".into(),
+            },
+        }
+    }
+    fn block_on<F: core::future::Future>(f: F) -> F::Output {
+        // minimal executor for the async decide() in a sync test
+        use core::task::{Context, Poll, RawWaker, RawWakerVTable, Waker};
+        fn noop(_: *const ()) {}
+        fn clone(_: *const ()) -> RawWaker {
+            RawWaker::new(core::ptr::null(), &VT)
+        }
+        static VT: RawWakerVTable = RawWakerVTable::new(clone, noop, noop, noop);
+        let waker = unsafe { Waker::from_raw(RawWaker::new(core::ptr::null(), &VT)) };
+        let mut cx = Context::from_waker(&waker);
+        let mut f = core::pin::pin!(f);
+        loop {
+            if let Poll::Ready(v) = f.as_mut().poll(&mut cx) {
+                return v;
+            }
+        }
+    }
+
+    #[test]
+    fn guard_allow_passes_and_deny_blocks() {
+        let g = Guard::new(FixedEngine(Verdict::Allow), "test");
+        assert_eq!(block_on(g.decide(&tool_event())), Verdict::Allow);
+        let g = Guard::new(FixedEngine(Verdict::Deny("no".into())), "test");
+        assert_eq!(
+            block_on(g.decide(&tool_event())),
+            Verdict::Deny("no".into())
+        );
+    }
+
+    #[test]
+    fn guard_ask_fails_closed_then_opens_with_approver() {
+        let g = Guard::new(FixedEngine(Verdict::Ask("c".into())), "test");
+        assert!(matches!(
+            block_on(g.decide(&tool_event())),
+            Verdict::Deny(_)
+        )); // DenyAll
+        let g = Guard::with_approver(FixedEngine(Verdict::Ask("c".into())), YesApprover, "test");
+        assert_eq!(block_on(g.decide(&tool_event())), Verdict::Allow);
+    }
+
+    #[test]
+    fn guard_disabled_allows_everything() {
+        let mut g = Guard::new(FixedEngine(Verdict::Deny("no".into())), "test");
+        g.set_enabled(false);
+        assert_eq!(block_on(g.decide(&tool_event())), Verdict::Allow);
     }
 
     #[test]

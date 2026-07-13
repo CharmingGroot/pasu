@@ -1,5 +1,5 @@
 <p align="center">
-  <!-- TODO(logo): drop your icon here, e.g. <img src="docs/logo.svg" width="120" alt="pasu"> -->
+  <img src="docs/logo.svg" width="112" alt="pasu — a gate that lets only the allowed flow through">
 </p>
 
 <h1 align="center">pasu &nbsp;<sub><sup>把守</sup></sub></h1>
@@ -32,7 +32,7 @@ calls and egress, but a tool running its own network code slips past them.
 pasu runs **two layers that share one policy**:
 
 <p align="center">
-  <img src="docs/architecture.svg" width="700" alt="pasu two-layer egress defense: cooperative rig hooks backed by an enforcing kernel eBPF guard">
+  <img src="docs/flow.svg" width="760" alt="pasu two-layer egress defense: one policy drives a cooperative rig hook and an enforcing kernel eBPF guard; a rogue egress that bypasses the hook is still dropped by the kernel">
 </p>
 
 - **① Cooperative — in-process (`pasu-rig`)**: tool-call gate + HITL approval, LLM egress by policy. Rich context; bypassable.
@@ -69,6 +69,22 @@ default: deny                        # fail-closed
 
 ## Quickstart
 
+### Wrap any agent — no code changes
+
+pasu is a **guard, not an agent**: it doesn't care what framework your agent
+uses. `pasu run` puts the command in a dedicated cgroup with the kernel guard
+attached before its first instruction:
+
+```bash
+sudo pasu run --policy rules.yaml -- python crew.py        # CrewAI / LangChain / anything
+sudo pasu run --policy rules.yaml -- npx some-agent "task" # language-agnostic
+```
+
+Everything the policy doesn't allow is dropped by the kernel — even if the
+agent (or a prompt-injected tool) opens its own sockets.
+
+### Deeper: in-process hooks (optional)
+
 Guard a rig agent (tool gate + HITL + LLM egress) with audit:
 
 ```rust
@@ -80,19 +96,59 @@ let hook = PasuSecurityHook::new(engine).with_sink(audit_sink);   // + .with_app
 agent.prompt("do the task").add_hook(hook).await?;
 ```
 
-Kernel egress guard on Linux — a **dedicated** cgroup (never the root cgroup):
+Kernel egress guard on Linux — **the same YAML**, lowered to the kernel
+allowlist (a **dedicated** cgroup; never the root cgroup):
 
 ```bash
-sudo pasu-egress --config /etc/pasu/egress.toml
-# or ad hoc:
+sudo pasu-daemon --policy rules.yaml --cgroup-path /sys/fs/cgroup/my-agent
+# lower-level loader (flags / TOML) if you don't want the policy file:
 sudo pasu-egress --cgroup-path /sys/fs/cgroup/my-agent --allow-domain api.openai.com
 ```
 
-Approval + audit web UI:
+Allow rules with an IPv4 become static entries, exact hostnames are resolved
+(and re-resolved), and suffix patterns (`.openai.com`) are reported — they stay
+hook-layer-only until DNS-response sniffing lands. The kernel side is
+default-deny, so lowering is only ever *narrower* than the policy.
+
+Add `--admin-socket /run/pasu.sock` to inspect and edit the live guard without a
+restart (this is what the UI talks to):
+
+```bash
+echo status        | socat - UNIX-CONNECT:/run/pasu.sock   # {"cgroup_path":…,"allow_ips":[…]}
+echo 'allow 1.2.3.4' | socat - UNIX-CONNECT:/run/pasu.sock  # add to the kernel allowlist now
+echo 'deny 1.2.3.4'  | socat - UNIX-CONNECT:/run/pasu.sock  # remove it now
+```
+
+Web UI — approvals (`/`), audit (`/audit`), and a live **egress dashboard**
+(`/egress`: kernel filter coverage, add/remove allowlist entries, read-only
+policy view with each rule's verdict + tool guard):
 
 ```rust
-pasu_ui::serve(addr, approvals, feed).await?;   // "/" approvals · "/audit" decisions
+use pasu_ui::dashboard::{EgressAdmin, EgressUi};
+let egress = EgressUi::new(EgressAdmin::new("/run/pasu.sock"), Some("rules.yaml".into()));
+pasu_ui::serve_all(addr, approvals, feed, Some(egress)).await?;   // + /egress
 ```
+
+Try it without a kernel (mock guard socket):
+
+```bash
+cargo run -p pasu-ui --example ui_demo   # http://127.0.0.1:8787/egress
+```
+
+## Run in a container
+
+The kernel guard containerizes like any eBPF tool — `CAP_BPF` + `CAP_NET_ADMIN`
+and a cgroup v2 mount. Quick proof (only `1.1.1.1` allowed; the kernel drops
+everything else, whatever the app does):
+
+```bash
+docker build -f deploy/Dockerfile -t pasu-egress:latest .
+./deploy/demo.sh    # allowed -> reachable · blocked -> dropped · RESULT: PASS
+```
+
+Sidecar ([`deploy/docker-compose.yml`](deploy/docker-compose.yml)) and Kubernetes
+([`deploy/k8s/`](deploy/k8s)) layouts, and the cgroup-targeting rules, are in
+**[docs/deployment.md](docs/deployment.md)**.
 
 ## Crates
 
@@ -108,14 +164,26 @@ pasu_ui::serve(addr, approvals, feed).await?;   // "/" approvals · "/audit" dec
 | `pasu-ui` | lightweight web UI — HITL approvals (`/`) + audit dashboard (`/audit`) |
 | `pasu-audit` | audit sinks — JSONL (stderr / file / SIEM) and in-memory |
 | `pasu-egress` · `pasu-ebpf` · `pasu-ebpf-common` | kernel eBPF cgroup egress — default-deny allowlist, DNS-aware (Linux) |
+| `pasu-daemon` | composition root — lowers the policy YAML to the kernel guard (one policy, both layers) |
+| `pasu-cli` | the `pasu` command — `pasu run` wraps any agent command in a guarded cgroup |
 
 Every crate depends only on `pasu-core` (acyclic); the rule format and framework
 integration are swappable behind traits.
 
+## Dependencies
+
+Key dependencies are pinned for reproducibility:
+
+| dependency | version | license | why this version |
+|---|---|---|---|
+| [rig](https://github.com/0xPlaygrounds/rig) (`rig-core`) | git `747b95a6` | MIT | `AgentHook` is merged upstream but not yet in a published release; moves to crates.io at rig's next release |
+| [aya](https://github.com/aya-rs/aya) (+ `aya-log`, `aya-build`) | git `773ca715` | MIT / Apache-2.0 | pinned until aya's next crates.io release — unpinned git deps broke our CI once (upstream API drift) |
+| [Falco](https://github.com/falcosecurity/falco) | — | — | **not a dependency** — pasu borrows the *rule-format idea* only; no Falco code |
+
 ## Numbers
 
-- **8 crates**, one acyclic core
-- **Tests**: 42 unit + eBPF end-to-end on a real kernel (GitHub runner + Lima VM)
+- **9 crates**, one acyclic core
+- **Tests**: 48 unit + eBPF end-to-end on a real kernel (GitHub runner + Lima VM)
 - **CI**: 3 jobs green — `check` (stable) · `eBPF build+unit` (nightly + bpf-linker) · `eBPF E2E` (privileged)
 - **Policy evaluation**: ~0.11–0.12 µs/decision (criterion) — effectively free next to a tool call
 - **default-deny allowlist**, **DNS-aware**, **HITL**, **JSONL audit**
@@ -132,10 +200,11 @@ MVP — the engine, policy, HITL, audit, deployment, and benchmarks are in place
 | approval + audit UI | ui | ✅ |
 | audit sinks (JSONL) | audit | ✅ |
 | config-driven daemon + systemd | egress + packaging | ✅ |
+| **one policy file → both layers** | daemon | ✅ |
 
-Next: precise DNS-response sniffing (toFQDN), eBPF-layer audit emission, a
-`pasu-daemon` crate with systemd-slice orchestration, and a crates.io release
-(rig is currently git-pinned).
+Next: precise DNS-response sniffing (toFQDN — unlocks suffix hosts in the
+kernel), eBPF-layer audit emission, a control-plane API + richer UI, and a
+crates.io release (rig is currently git-pinned).
 
 ## Development
 
@@ -158,6 +227,12 @@ Conventional Commits, DCO sign-off (`git commit -s`), feature branch → PR → 
 
 pasu is a security tool that runs in the kernel. Please report vulnerabilities
 privately — see [SECURITY.md](SECURITY.md).
+
+## Acknowledgements
+
+- Built with [rig](https://github.com/0xPlaygrounds/rig) (`rig-core`), licensed under MIT.
+- The policy syntax is inspired by [Falco](https://github.com/falcosecurity/falco)'s rule
+  format. pasu is not affiliated with or endorsed by the Falco project or the CNCF.
 
 ## License
 
