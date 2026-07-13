@@ -30,6 +30,9 @@ jobs:
         run: cargo clippy --all-targets -- -D warnings
       - name: test
         run: cargo test
+      # optional OTLP verdict export (feature-gated; keeps the default build pure)
+      - name: otel feature (build + unit)
+        run: cargo test -p pasu-audit --features otel
 
   ebpf:
     name: eBPF build + unit (linux)
