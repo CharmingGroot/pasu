@@ -29,14 +29,16 @@ AI agents get prompt-injected, and a compromised agent will happily exfiltrate
 your data. Framework-level guards are *cooperative*: they inspect declared tool
 calls and egress, but a tool running its own network code slips past them.
 
-pasu runs **two layers that share one policy**:
+pasu guards at two points that share one policy — **intent** (what the agent
+wants to do) and **effect** (what actually leaves the box):
 
 <p align="center">
-  <img src="docs/flow.svg" width="760" alt="pasu two-layer egress defense: one policy drives a cooperative rig hook and an enforcing kernel eBPF guard; a rogue egress that bypasses the hook is still dropped by the kernel">
+  <img src="docs/flow.svg" width="760" alt="pasu egress defense: one policy drives a cooperative rig hook and an enforcing kernel eBPF guard; a rogue egress that bypasses the hook is still dropped by the kernel">
 </p>
 
-- **① Cooperative — in-process (`pasu-rig`)**: tool-call gate + HITL approval, LLM egress by policy. Rich context; bypassable.
-- **② Enforcing — kernel (`pasu-egress` / `pasu-ebpf`)**: cgroup egress in the kernel. Language-agnostic, **unbypassable**.
+- **Intent, in-process (`pasu-rig`)**: tool-call gate + HITL approval for rig agents. Rich context; SDK-specific, bypassable.
+- **Intent, LLM-API proxy (`pasu-proxy`)**: parses the tool calls the model returns and guards them — **framework-agnostic** (any SDK, only a `base_url` change; no per-SDK adapter). OpenAI-compatible today.
+- **Effect, kernel (`pasu-egress` / `pasu-ebpf`)**: cgroup egress in the kernel. Language-agnostic, **unbypassable**.
 
 Proven end-to-end: a tool that bypasses the hook with its own `reqwest` is still
 **dropped by the kernel** (the eBPF + rig combo demo).
@@ -82,6 +84,32 @@ sudo pasu run --policy rules.yaml -- npx some-agent "task" # language-agnostic
 
 Everything the policy doesn't allow is dropped by the kernel — even if the
 agent (or a prompt-injected tool) opens its own sockets.
+
+### Guard tool calls for any SDK — the LLM-API proxy
+
+Point your agent's `base_url` at `pasu-proxy`. It forwards to the real provider,
+parses the tool calls the model returns, and blocks any the policy denies
+(fail-closed) before the agent runs them. The tool-call decision rides in the
+provider response, so parsing the provider format covers every SDK — no
+per-framework adapter:
+
+```rust
+use pasu_core::Guard;
+use pasu_proxy::{router, Provider, ProxyState};
+use pasu_rules::RulesetEngine;
+use std::sync::Arc;
+
+let state = Arc::new(ProxyState {
+    guard: Guard::new(RulesetEngine::from_yaml(policy_yaml)?, "llm-proxy"),
+    client: reqwest::Client::new(),
+    upstream_base: "https://api.openai.com".into(),
+    provider: Provider::OpenAi,
+});
+let app = router(state);   // axum Router — serve it, then point the agent's base_url at it
+```
+
+OpenAI-compatible, non-streaming today; streaming (SSE) responses pass through
+unguarded for now, and Anthropic/Gemini formats are next.
 
 ### Deeper: in-process hooks (optional)
 
@@ -161,6 +189,7 @@ Sidecar ([`deploy/docker-compose.yml`](deploy/docker-compose.yml)) and Kubernete
 | `pasu-core` | shared types (`Event` / `Verdict`) + traits (`RuleEngine` · `Layer` · `Approver` · `AuditSink`) |
 | `pasu-rules` | `RuleEngine` — Falco-inspired YAML ruleset (allow/deny/ask, default fail-closed) |
 | `pasu-rig` | rig integration — `AgentHook` (tool gate + HITL), `HttpClientExt` (LLM egress) |
+| `pasu-proxy` | LLM-API reverse proxy — parses tool calls from provider responses (OpenAI…) and guards them via the same `Guard`; framework-agnostic (`base_url` only) |
 | `pasu-ui` | lightweight web UI — HITL approvals (`/`) + audit dashboard (`/audit`) |
 | `pasu-audit` | audit sinks — JSONL (stderr / file / SIEM) and in-memory |
 | `pasu-egress` · `pasu-ebpf` · `pasu-ebpf-common` | kernel eBPF cgroup egress — default-deny allowlist, DNS-aware (Linux) |
@@ -182,8 +211,8 @@ Key dependencies are pinned for reproducibility:
 
 ## Numbers
 
-- **9 crates**, one acyclic core
-- **Tests**: 48 unit + eBPF end-to-end on a real kernel (GitHub runner + Lima VM)
+- **10 crates**, one acyclic core
+- **Tests**: 57 unit + end-to-end — eBPF on a real kernel (GitHub runner + Lima VM) and the LLM-API proxy over HTTP
 - **CI**: 3 jobs green — `check` (stable) · `eBPF build+unit` (nightly + bpf-linker) · `eBPF E2E` (privileged)
 - **Policy evaluation**: ~0.11–0.12 µs/decision (criterion) — effectively free next to a tool call
 - **default-deny allowlist**, **DNS-aware**, **HITL**, **JSONL audit**
@@ -197,19 +226,22 @@ MVP — the engine, policy, HITL, audit, deployment, and benchmarks are in place
 | kernel default-deny allowlist (DNS-aware) | egress/ebpf | ✅ |
 | policy language (YAML) | rules | ✅ |
 | tool gate · HITL · LLM egress | rig | ✅ |
+| LLM-API proxy — tool-call guard (any SDK) | proxy | ✅ OpenAI · non-stream |
 | approval + audit UI | ui | ✅ |
 | audit sinks (JSONL) | audit | ✅ |
 | config-driven daemon + systemd | egress + packaging | ✅ |
 | **one policy file → both layers** | daemon | ✅ |
 
-Next: precise DNS-response sniffing (toFQDN — unlocks suffix hosts in the
-kernel), eBPF-layer audit emission, a control-plane API + richer UI, and a
-crates.io release (rig is currently git-pinned).
+Next: proxy SSE (streaming) reassembly + Anthropic/Gemini formats and eBPF
+force-routing of LLM traffic through the proxy; precise DNS-response sniffing
+(toFQDN — unlocks suffix hosts in the kernel), eBPF-layer audit emission, a
+control-plane API + richer UI, and a crates.io release (rig is currently
+git-pinned).
 
 ## Development
 
 ```bash
-cargo test              # portable crates: core, rig, rules, ui, audit (stable)
+cargo test              # portable crates: core, rig, rules, ui, audit, proxy (stable)
 cargo build -p pasu-egress   # eBPF stack — Linux only, nightly + bpf-linker
 ```
 
