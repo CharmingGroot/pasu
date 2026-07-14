@@ -1699,7 +1699,9 @@ dependencies = [
 name = "pasu-proxy"
 version = "0.1.0"
 dependencies = [
+ "anyhow",
  "axum",
+ "clap",
  "pasu-core",
  "pasu-rules",
  "reqwest",
