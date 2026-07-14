@@ -18,7 +18,7 @@ use std::time::Duration;
 use axum::extract::{Form, State};
 use axum::response::{Html, Redirect};
 use axum::routing::{get, post};
-use axum::Router;
+use axum::{Extension, Router};
 use pasu_core::{Approver, AuditRecord, AuditSink};
 use serde::Deserialize;
 use tokio::sync::oneshot;
@@ -175,8 +175,15 @@ impl AuditSink for AuditFeed {
     }
 }
 
-/// axum router: approval UI (`/`, `/decision`) + audit view (`/audit`).
-pub fn router(approvals: AppState, feed: AuditFeed) -> Router {
+/// Which nav tabs to render. The `egress` tab is only shown when the egress
+/// dashboard is actually mounted, so it never links to a 404.
+#[derive(Clone, Copy)]
+struct Nav {
+    egress: bool,
+}
+
+/// The approval + audit routes (no egress dashboard).
+fn routes(approvals: AppState, feed: AuditFeed) -> Router {
     Router::new()
         .route("/", get(index))
         .route("/decision", post(decision))
@@ -188,6 +195,11 @@ pub fn router(approvals: AppState, feed: AuditFeed) -> Router {
         )
 }
 
+/// axum router: approval UI (`/`, `/decision`) + audit view (`/audit`).
+pub fn router(approvals: AppState, feed: AuditFeed) -> Router {
+    routes(approvals, feed).layer(Extension(Nav { egress: false }))
+}
+
 /// Router including the egress dashboard (`/egress`) when an admin client is
 /// given. `policy_path` (optional) renders the read-only ruleset view.
 pub fn router_with_dashboard(
@@ -195,11 +207,13 @@ pub fn router_with_dashboard(
     feed: AuditFeed,
     egress: Option<dashboard::EgressUi>,
 ) -> Router {
-    let base = router(approvals, feed);
-    match egress {
+    let egress_on = egress.is_some();
+    let base = routes(approvals, feed);
+    let combined = match egress {
         Some(ui) => base.merge(dashboard::router(ui)),
         None => base,
-    }
+    };
+    combined.layer(Extension(Nav { egress: egress_on }))
 }
 
 /// Serve the UI on `addr` until the process exits.
@@ -222,7 +236,10 @@ pub async fn serve_all(
     axum::serve(listener, router_with_dashboard(approvals, feed, egress)).await
 }
 
-async fn audit_index(State(feed): State<AuditFeed>) -> Html<String> {
+async fn audit_index(
+    State(feed): State<AuditFeed>,
+    Extension(nav): Extension<Nav>,
+) -> Html<String> {
     let recent = feed.recent();
     let inner = if recent.is_empty() {
         "<p class=empty>no decisions yet</p>".to_string()
@@ -249,10 +266,10 @@ async fn audit_index(State(feed): State<AuditFeed>) -> Html<String> {
         "<div class=card><h2>recent decisions</h2>\
          <p class=sub>every allow / ask / deny from both layers (newest first)</p>{inner}</div>"
     );
-    Html(page("/audit", &body))
+    Html(page("/audit", &body, nav.egress))
 }
 
-async fn index(State(state): State<AppState>) -> Html<String> {
+async fn index(State(state): State<AppState>, Extension(nav): Extension<Nav>) -> Html<String> {
     let pending = state.list();
     let inner = if pending.is_empty() {
         "<p class=empty>nothing waiting — the agent is clear to proceed</p>".to_string()
@@ -281,7 +298,7 @@ async fn index(State(state): State<AppState>) -> Html<String> {
         "<div class=card><h2>pending approvals <span class=count>({n})</span></h2>\
          <p class=sub>human-in-the-loop — a <code>Verdict::Ask</code> waits here (fail-closed on timeout)</p>{inner}</div>"
     );
-    Html(page("/", &body))
+    Html(page("/", &body, nav.egress))
 }
 
 #[derive(Deserialize)]
@@ -355,10 +372,16 @@ td{padding:10px;border-bottom:1px solid var(--border);vertical-align:middle}tr:l
 @media(max-width:560px){header{flex-wrap:wrap}nav{margin-left:0;width:100%;margin-top:8px}}";
 
 /// Full HTML page with the shared header/nav; `active` is the current path.
-pub(crate) fn page(active: &str, body: &str) -> String {
+/// `egress` gates the egress tab so it only appears when the dashboard is mounted.
+pub(crate) fn page(active: &str, body: &str, egress: bool) -> String {
     let tab = |href: &str, label: &str| {
         let cls = if active == href { " class=active" } else { "" };
         format!("<a{cls} href=\"{href}\">{label}</a>")
+    };
+    let egress_tab = if egress {
+        tab("/egress", "egress")
+    } else {
+        String::new()
     };
     format!(
         "<!doctype html><html lang=en><head><meta charset=utf-8>\
@@ -369,7 +392,7 @@ pub(crate) fn page(active: &str, body: &str) -> String {
          <nav>{}{}{}</nav></header><main>{body}</main></body></html>",
         tab("/", "approvals"),
         tab("/audit", "audit"),
-        tab("/egress", "egress"),
+        egress_tab,
     )
 }
 
@@ -467,5 +490,15 @@ mod tests {
         feed.record(&rec("x"));
         // the clone sees the same buffer
         assert_eq!(handle.recent().len(), 1);
+    }
+
+    #[test]
+    fn page_hides_egress_tab_unless_dashboard_is_mounted() {
+        // No dashboard → no dead /egress link.
+        assert!(!page("/", "body", false).contains("/egress"));
+        // Dashboard mounted → the egress tab is rendered.
+        assert!(page("/", "body", true).contains("href=\"/egress\""));
+        // The always-present tabs stay regardless.
+        assert!(page("/", "body", false).contains("href=\"/audit\""));
     }
 }
