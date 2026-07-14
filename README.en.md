@@ -148,6 +148,10 @@ OpenAI-compatible, Anthropic, and Gemini non-streaming responses today (the
 three formats cover effectively every SDK); streaming (SSE) responses pass
 through unguarded for now — reassembly is next.
 
+Run the binary with `--ui <addr>` to attach human-in-the-loop approval — a web
+queue (`/`) for pending `Ask` verdicts plus an audit view (`/audit`). Without
+it, `Ask` fails closed.
+
 Deploy it as a sidecar — a slim, **unprivileged** image
 ([`deploy/proxy/Dockerfile`](deploy/proxy/Dockerfile)) and an agent + proxy pod
 ([`deploy/proxy/k8s-sidecar.yaml`](deploy/proxy/k8s-sidecar.yaml), the agent's

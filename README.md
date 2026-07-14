@@ -114,6 +114,8 @@ let app = router(state);   // axum Router — 서빙한 뒤 에이전트 base_ur
 
 OpenAI 호환·Anthropic·Gemini의 논스트리밍 응답을 지원합니다(세 포맷이 사실상 모든 SDK를 커버). 스트리밍(SSE) 응답은 당분간 그대로 통과하고(가드 미적용), 재조립은 다음 차례입니다.
 
+`Ask` 판정에 사람 승인을 붙이려면 바이너리를 `--ui <주소>`로 실행하세요 — 승인 대기열 웹 UI(`/`)와 결정 감사 뷰(`/audit`)가 함께 뜹니다. 미지정 시 `Ask`는 fail-closed로 거부됩니다.
+
 사이드카로 배포할 수도 있습니다 — 슬림하고 **권한이 필요 없는** 이미지([`deploy/proxy/Dockerfile`](deploy/proxy/Dockerfile))와 에이전트+프록시를 한 파드에 담은 예시([`deploy/proxy/k8s-sidecar.yaml`](deploy/proxy/k8s-sidecar.yaml), 에이전트 `base_url` → `localhost`). 직접 실행도 됩니다:
 
 ```bash
