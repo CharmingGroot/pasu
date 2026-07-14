@@ -176,7 +176,8 @@ docker build -f deploy/Dockerfile -t pasu-egress:latest .
 | crate | 역할 |
 |-------|------|
 | `pasu-core` | 공유 타입(`Event` / `Verdict`)과 trait(`RuleEngine` · `Layer` · `Approver` · `AuditSink`), 그리고 `Guard` 파사드 |
-| `pasu-rules` | `RuleEngine` — Falco에서 영향받은 YAML 룰셋(allow/deny/ask, 기본 fail-closed) || `pasu-proxy` | LLM-API 리버스 프록시 — provider 응답(OpenAI…)의 도구 호출을 파싱해 같은 `Guard`로 가드; 프레임워크 무관(`base_url`만) |
+| `pasu-rules` | `RuleEngine` — Falco에서 영향받은 YAML 룰셋(allow/deny/ask, 기본 fail-closed) |
+| `pasu-proxy` | LLM-API 리버스 프록시 — provider 응답(OpenAI…)의 도구 호출을 파싱해 같은 `Guard`로 가드; 프레임워크 무관(`base_url`만) |
 | `pasu-ui` | 경량 웹 UI — HITL 승인(`/`)과 감사·egress 대시보드(`/audit`, `/egress`) |
 | `pasu-audit` | 감사 sink — JSONL(stderr/파일/SIEM), 인메모리, OpenTelemetry(OTLP 스팬, `otel` feature) |
 | `pasu-egress` · `pasu-ebpf` · `pasu-ebpf-common` | 커널 eBPF cgroup egress — 기본 차단 allowlist, DNS 인식 (Linux) |
@@ -190,12 +191,13 @@ docker build -f deploy/Dockerfile -t pasu-egress:latest .
 핵심 의존성은 재현성을 위해 버전을 고정했습니다.
 
 | 의존성 | 버전 | 라이선스 | 이유 |
-|---|---|---|---|| [aya](https://github.com/aya-rs/aya) (+ `aya-log`, `aya-build`) | git `773ca715` | MIT / Apache-2.0 | aya 다음 릴리스 전까지 고정 — 고정하지 않은 git 의존이 upstream API 변경으로 CI를 깨뜨린 적 있음 |
+|---|---|---|---|
+| [aya](https://github.com/aya-rs/aya) (+ `aya-log`, `aya-build`) | git `773ca715` | MIT / Apache-2.0 | aya 다음 릴리스 전까지 고정 — 고정하지 않은 git 의존이 upstream API 변경으로 CI를 깨뜨린 적 있음 |
 | [Falco](https://github.com/falcosecurity/falco) | — | — | **의존성이 아님** — 룰 포맷 아이디어만 빌렸을 뿐 Falco 코드는 없음 |
 
 ## 지표
 
-- **crate 11개**, 순환 없는 코어 하나 (모든 crate가 `pasu-core`에만 의존)
+- **crate 10개**, 순환 없는 코어 하나 (모든 crate가 `pasu-core`에만 의존)
 - **테스트**: 워크스페이스 전반의 유닛 테스트 + 실제 커널에서의 eBPF E2E (GitHub 러너 + Lima VM)
 - **CI**: 4개 잡 통과 — `check`(stable) · `eBPF build+unit`(nightly + bpf-linker) · `eBPF E2E`(privileged) · `cargo-deny`(취약점/라이선스/소스)
 - **정책 평가**: ~0.11–0.12 µs/판정 (criterion) — 도구 호출 비용에 비하면 사실상 공짜
