@@ -444,7 +444,7 @@ mod tests {
                 port: 443,
             },
         };
-        pasu_core::AuditRecord::new("rig-egress", &ev, &pasu_core::Verdict::Allow)
+        pasu_core::AuditRecord::new("egress", &ev, &pasu_core::Verdict::Allow)
     }
 
     #[test]

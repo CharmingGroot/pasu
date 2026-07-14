@@ -115,7 +115,7 @@ mod tests {
                 input: "{}".into(),
             },
         };
-        AuditRecord::new("rig-tool", &ev, &Verdict::Deny("needs approval".into()))
+        AuditRecord::new("proxy-tool", &ev, &Verdict::Deny("needs approval".into()))
     }
 
     fn rec_egress_allow() -> AuditRecord {
@@ -139,7 +139,7 @@ mod tests {
     fn tool_deny_maps_to_attributes() {
         let a = attributes(&rec_tool_deny());
         assert_eq!(get(&a, "pasu.verdict").unwrap().as_str(), "deny");
-        assert_eq!(get(&a, "pasu.layer").unwrap().as_str(), "rig-tool");
+        assert_eq!(get(&a, "pasu.layer").unwrap().as_str(), "proxy-tool");
         assert_eq!(get(&a, "pasu.tool").unwrap().as_str(), "transfer_funds");
         assert_eq!(get(&a, "pasu.reason").unwrap().as_str(), "needs approval");
         assert!(get(&a, "pasu.host").is_none());

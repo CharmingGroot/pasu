@@ -29,10 +29,9 @@ multiple-versions = "warn"
 wildcards = "warn"
 
 [sources]
-# We pin some deps to git (rig, aya) until their next crates.io release.
+# We pin the eBPF stack (aya) to git until its next crates.io release.
 unknown-registry = "deny"
 unknown-git = "deny"
 allow-git = [
-    "https://github.com/0xPlaygrounds/rig",
     "https://github.com/aya-rs/aya",
 ]

@@ -1,50 +1,39 @@
 <svg viewBox="0 0 720 600" xmlns="http://www.w3.org/2000/svg" role="img" font-family="system-ui, -apple-system, sans-serif">
 <title>pasu Information Architecture (crate map)</title>
-<desc>pasu의 두 intent 계층(rig 인프로세스 훅, LLM-API 프록시)과 effect 계층(eBPF 커널), 그리고 rules·audit·ui 구현이 모두 pasu-core의 Event/Verdict 타입과 RuleEngine·Layer·Approver·AuditSink 트레이트를 공유한다는 crate 지도</desc>
+<desc>pasu의 intent 계층(LLM-API 프록시)과 effect 계층(eBPF 커널), 그리고 rules·audit·ui 구현이 모두 pasu-core의 Event/Verdict 타입과 RuleEngine·Layer·Approver·AuditSink 트레이트를 공유한다는 crate 지도</desc>
 <rect width="720" height="600" fill="#ffffff"/>
 <defs>
   <marker id="a" markerWidth="9" markerHeight="9" refX="6" refY="3" orient="auto"><path d="M0,0 L6,3 L0,6 Z" fill="#555555"/></marker>
 </defs>
 
 <text x="36" y="33" font-size="19" font-weight="700" fill="#1a1a1a">pasu — Information Architecture (crate 지도)</text>
-<text x="36" y="54" font-size="12.5" fill="#555555">intent 두 계층(rig · proxy) + effect(eBPF) + 정책·관측이 모두 pasu-core를 공유 — 화살표 = pasu-core 사용(trait 구현)</text>
+<text x="36" y="54" font-size="12.5" fill="#555555">intent(proxy) + effect(eBPF) + 정책·관측이 모두 pasu-core를 공유 — 화살표 = pasu-core 사용(trait 구현)</text>
 
 <rect x="285" y="70" width="150" height="38" rx="8" fill="#ffffff" stroke="#9a9a9a"/>
 <text x="360" y="94" font-size="13" font-weight="600" text-anchor="middle" fill="#1a1a1a">AI Agent (any SDK)</text>
-<line x1="320" y1="108" x2="150" y2="126" stroke="#555555" marker-end="url(#a)"/>
-<line x1="360" y1="108" x2="360" y2="126" stroke="#555555" marker-end="url(#a)"/>
-<line x1="400" y1="108" x2="580" y2="126" stroke="#555555" marker-end="url(#a)"/>
+<line x1="330" y1="108" x2="230" y2="126" stroke="#555555" marker-end="url(#a)"/>
+<line x1="400" y1="108" x2="500" y2="126" stroke="#555555" marker-end="url(#a)"/>
 
-<!-- ① intent · rig -->
-<rect x="24" y="128" width="216" height="112" rx="8" fill="#f4f4f3" stroke="#9a9a9a"/>
-<text x="38" y="149" font-size="11.5" font-weight="700" fill="#c2410c">① Intent · in-process</text>
-<text x="38" y="165" font-size="11" font-weight="600" fill="#1a1a1a">pasu-rig</text>
-<rect x="38" y="174" width="188" height="26" rx="5" fill="#ffffff" stroke="#dddddd"/>
-<text x="47" y="191" font-size="10" fill="#1a1a1a">AgentHook — tool gate + HITL</text>
-<rect x="38" y="204" width="188" height="26" rx="5" fill="#ffffff" stroke="#dddddd"/>
-<text x="47" y="221" font-size="10" fill="#1a1a1a">HttpClientExt — LLM egress</text>
+<!-- ① intent · proxy -->
+<rect x="96" y="128" width="216" height="112" rx="8" fill="#eef7f4" stroke="#0d9488"/>
+<text x="110" y="149" font-size="11.5" font-weight="700" fill="#0f766e">① Intent · LLM-API proxy</text>
+<text x="110" y="165" font-size="11" font-weight="600" fill="#1a1a1a">pasu-proxy</text>
+<rect x="110" y="174" width="188" height="26" rx="5" fill="#ffffff" stroke="#cbeae3"/>
+<text x="119" y="191" font-size="10" fill="#1a1a1a">parses tool_calls (OpenAI…)</text>
+<rect x="110" y="204" width="188" height="26" rx="5" fill="#ffffff" stroke="#cbeae3"/>
+<text x="119" y="221" font-size="10" fill="#1a1a1a">any SDK · base_url only</text>
 
-<!-- ② intent · proxy -->
-<rect x="252" y="128" width="216" height="112" rx="8" fill="#eef7f4" stroke="#0d9488"/>
-<text x="266" y="149" font-size="11.5" font-weight="700" fill="#0f766e">② Intent · LLM-API proxy</text>
-<text x="266" y="165" font-size="11" font-weight="600" fill="#1a1a1a">pasu-proxy</text>
-<rect x="266" y="174" width="188" height="26" rx="5" fill="#ffffff" stroke="#cbeae3"/>
-<text x="275" y="191" font-size="10" fill="#1a1a1a">parses tool_calls (OpenAI…)</text>
-<rect x="266" y="204" width="188" height="26" rx="5" fill="#ffffff" stroke="#cbeae3"/>
-<text x="275" y="221" font-size="10" fill="#1a1a1a">any SDK · base_url only</text>
+<!-- ② effect · kernel -->
+<rect x="408" y="128" width="216" height="112" rx="8" fill="#f4f4f3" stroke="#9a9a9a"/>
+<text x="422" y="149" font-size="11.5" font-weight="700" fill="#c2410c">② Effect · kernel</text>
+<text x="422" y="165" font-size="11" font-weight="600" fill="#1a1a1a">pasu-egress · pasu-ebpf</text>
+<rect x="422" y="174" width="188" height="26" rx="5" fill="#ffffff" stroke="#dddddd"/>
+<text x="431" y="191" font-size="10" fill="#1a1a1a">cgroup egress (loader/daemon)</text>
+<rect x="422" y="204" width="188" height="26" rx="5" fill="#ffffff" stroke="#dddddd"/>
+<text x="431" y="221" font-size="9.5" fill="#1a1a1a">default-deny · DNS-aware · Linux</text>
 
-<!-- ③ effect · kernel -->
-<rect x="480" y="128" width="216" height="112" rx="8" fill="#f4f4f3" stroke="#9a9a9a"/>
-<text x="494" y="149" font-size="11.5" font-weight="700" fill="#c2410c">③ Effect · kernel</text>
-<text x="494" y="165" font-size="11" font-weight="600" fill="#1a1a1a">pasu-egress · pasu-ebpf</text>
-<rect x="494" y="174" width="188" height="26" rx="5" fill="#ffffff" stroke="#dddddd"/>
-<text x="503" y="191" font-size="10" fill="#1a1a1a">cgroup egress (loader/daemon)</text>
-<rect x="494" y="204" width="188" height="26" rx="5" fill="#ffffff" stroke="#dddddd"/>
-<text x="503" y="221" font-size="9.5" fill="#1a1a1a">default-deny · DNS-aware · Linux</text>
-
-<line x1="132" y1="240" x2="300" y2="288" stroke="#555555" marker-end="url(#a)"/>
-<line x1="360" y1="240" x2="360" y2="288" stroke="#555555" marker-end="url(#a)"/>
-<line x1="588" y1="240" x2="420" y2="288" stroke="#555555" marker-end="url(#a)"/>
+<line x1="204" y1="240" x2="300" y2="288" stroke="#555555" marker-end="url(#a)"/>
+<line x1="516" y1="240" x2="420" y2="288" stroke="#555555" marker-end="url(#a)"/>
 
 <rect x="180" y="290" width="360" height="94" rx="8" fill="#ffffff" stroke="#9a9a9a" stroke-width="2"/>
 <text x="200" y="314" font-size="14" font-weight="700" fill="#c2410c">pasu-core</text>
@@ -72,6 +61,6 @@
 <text x="498" y="476" font-size="10" font-family="ui-monospace, monospace" fill="#8a8a8a">impl Approver · AuditSink</text>
 
 <text x="36" y="524" font-size="11" fill="#555555">런타임 흐름:  Layer / proxy → RuleEngine.evaluate(Event) → Verdict → (Ask → Approver) · AuditSink.record → pasu-ui / JSONL</text>
-<text x="36" y="546" font-size="10.5" fill="#8a8a8a">intent 계층(rig · proxy)은 tool-call을, effect 계층(kernel)은 egress를 통제.  pasu-proxy·daemon 바이너리는 composition root라 pasu-rules에도 의존.</text>
+<text x="36" y="546" font-size="10.5" fill="#8a8a8a">intent 계층(proxy)은 tool-call을, effect 계층(kernel)은 egress를 통제.  pasu-proxy·daemon 바이너리는 composition root라 pasu-rules에도 의존.</text>
 <text x="36" y="566" font-size="10.5" fill="#8a8a8a">eBPF 스택: pasu-egress → pasu-ebpf → pasu-ebpf-common (Linux).</text>
 </svg>

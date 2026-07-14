@@ -2,7 +2,7 @@
 
 pasu has two layers with very different deployment stories:
 
-- **Cooperative layer** (`pasu-rig`, `pasu-rules`, `pasu-ui`, `pasu-audit`) — a
+- **Cooperative layer** (`pasu-proxy`, `pasu-rules`, `pasu-ui`, `pasu-audit`) — a
   Rust *library* you link into your agent. It ships in your agent's own
   container like any other dependency. No special privileges, any OS.
 - **Enforcing layer** (`pasu-egress` + `pasu-ebpf`) — a kernel eBPF guard. This

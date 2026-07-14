@@ -40,23 +40,23 @@ pasu is built for that setting: it runs entirely on one Linux host, needs **no
 Kubernetes and no external service**, and applies **three layers, one policy**:
 
 <p align="center">
-  <img src="docs/flow.svg" width="760" alt="pasu layered egress defense: one policy drives a cooperative rig hook and an enforcing kernel eBPF guard; a rogue egress that bypasses the hook is still dropped by the kernel, and every decision is recorded for audit">
+  <img src="docs/flow.svg" width="760" alt="pasu layered egress defense: one policy drives a cooperative proxy and an enforcing kernel eBPF guard; a rogue egress that bypasses the hook is still dropped by the kernel, and every decision is recorded for audit">
 </p>
 
 - **① Trace / audit** (`pasu-audit`): every decision is recorded — JSONL to a
   file/SIEM, or OpenTelemetry (OTLP) spans to *your own* stack. Audit evidence
   without anything leaving your network.
-- **② Tool-call guard — cooperative** (`pasu-rig` in-process · `pasu-proxy`
-  LLM-API proxy): gate declared tool calls + human-in-the-loop approval, LLM
-  egress by policy. The rig hook is rig-specific; **`pasu-proxy` parses the tool
-  calls in the provider response — framework-agnostic** (any SDK, `base_url`
-  only). Rich context; bypassable on its own.
+- **② Tool-call guard — cooperative** (`pasu-proxy` LLM-API proxy): point the
+  agent's `base_url` at the proxy; it parses the tool calls in the provider
+  response, gates them, and asks for human-in-the-loop approval when needed.
+  **Framework-agnostic** — any SDK, `base_url` only. Rich context; bypassable
+  on its own.
 - **③ Egress enforcement — kernel** (`pasu-egress` / `pasu-ebpf`): default-deny
   cgroup egress in the kernel. Language-agnostic and **unbypassable** — it
   catches whatever slips past layer ②.
 
 Proven end-to-end: a tool that bypasses the hook with its own `reqwest` is still
-**dropped by the kernel** (the eBPF + rig combo demo).
+**dropped by the kernel** (the eBPF kernel guard).
 
 ## On-prem & regulated fit
 
@@ -156,18 +156,7 @@ Deploy it as a sidecar — a slim, **unprivileged** image
 pasu-proxy --policy rules.yaml --listen 127.0.0.1:8788 --upstream https://api.openai.com
 ```
 
-### Deeper: in-process hooks (optional)
-
-Guard a rig agent (tool gate + HITL + LLM egress) with audit:
-
-```rust
-use pasu_rig::PasuSecurityHook;
-use pasu_rules::RulesetEngine;
-
-let engine = RulesetEngine::from_yaml(policy_yaml)?;
-let hook = PasuSecurityHook::new(engine).with_sink(audit_sink);   // + .with_approver(ui)
-agent.prompt("do the task").add_hook(hook).await?;
-```
+### Deeper: kernel egress guard (Linux)
 
 Kernel egress guard on Linux — **the same YAML**, lowered to the kernel
 allowlist (a **dedicated** cgroup; never the root cgroup):
@@ -232,9 +221,7 @@ Sidecar ([`deploy/docker-compose.yml`](deploy/docker-compose.yml)) and Kubernete
 | crate | role |
 |-------|------|
 | `pasu-core` | shared types (`Event` / `Verdict`) + traits (`RuleEngine` · `Layer` · `Approver` · `AuditSink`) |
-| `pasu-rules` | `RuleEngine` — Falco-inspired YAML ruleset (allow/deny/ask, default fail-closed) |
-| `pasu-rig` | rig integration — `AgentHook` (tool gate + HITL), `HttpClientExt` (LLM egress) |
-| `pasu-proxy` | LLM-API reverse proxy — parses tool calls from provider responses (OpenAI…) and guards them via the same `Guard`; framework-agnostic (`base_url` only) |
+| `pasu-rules` | `RuleEngine` — Falco-inspired YAML ruleset (allow/deny/ask, default fail-closed) || `pasu-proxy` | LLM-API reverse proxy — parses tool calls from provider responses (OpenAI…) and guards them via the same `Guard`; framework-agnostic (`base_url` only) |
 | `pasu-ui` | lightweight web UI — HITL approvals (`/`) + audit dashboard (`/audit`) |
 | `pasu-audit` | audit sinks — JSONL (stderr / file / SIEM), in-memory, and OpenTelemetry (OTLP spans, `otel` feature) |
 | `pasu-egress` · `pasu-ebpf` · `pasu-ebpf-common` | kernel eBPF cgroup egress — default-deny allowlist, DNS-aware (Linux) |
@@ -249,9 +236,7 @@ integration are swappable behind traits.
 Key dependencies are pinned for reproducibility:
 
 | dependency | version | license | why this version |
-|---|---|---|---|
-| [rig](https://github.com/0xPlaygrounds/rig) (`rig-core`) | git `747b95a6` | MIT | `AgentHook` is merged upstream but not yet in a published release; moves to crates.io at rig's next release |
-| [aya](https://github.com/aya-rs/aya) (+ `aya-log`, `aya-build`) | git `773ca715` | MIT / Apache-2.0 | pinned until aya's next crates.io release — unpinned git deps broke our CI once (upstream API drift) |
+|---|---|---|---|| [aya](https://github.com/aya-rs/aya) (+ `aya-log`, `aya-build`) | git `773ca715` | MIT / Apache-2.0 | pinned until aya's next crates.io release — unpinned git deps broke our CI once (upstream API drift) |
 | [Falco](https://github.com/falcosecurity/falco) | — | — | **not a dependency** — pasu borrows the *rule-format idea* only; no Falco code |
 
 ## Numbers
@@ -270,8 +255,7 @@ MVP — the engine, policy, HITL, audit, deployment, and benchmarks are in place
 |---|---|:---:|
 | kernel default-deny allowlist (DNS-aware) | egress/ebpf | ✅ |
 | policy language (YAML) | rules | ✅ |
-| tool gate · HITL · LLM egress | rig | ✅ |
-| LLM-API proxy — tool-call guard (any SDK) | proxy | ✅ OpenAI · non-stream |
+| LLM-API proxy — tool-call guard · HITL (any SDK) | proxy | ✅ OpenAI · non-stream |
 | approval + audit UI | ui | ✅ |
 | audit sinks (JSONL) | audit | ✅ |
 | config-driven daemon + systemd | egress + packaging | ✅ |
@@ -280,13 +264,13 @@ MVP — the engine, policy, HITL, audit, deployment, and benchmarks are in place
 Next: proxy SSE (streaming) reassembly + Anthropic/Gemini formats and eBPF
 force-routing of LLM traffic through the proxy; precise DNS-response sniffing
 (toFQDN — unlocks suffix hosts in the kernel), eBPF-layer audit emission, a
-control-plane API + richer UI, and a crates.io release (rig is currently
+control-plane API + richer UI, and a crates.io release (aya is currently
 git-pinned).
 
 ## Development
 
 ```bash
-cargo test              # portable crates: core, rig, rules, ui, audit, proxy (stable)
+cargo test              # portable crates: core, rules, ui, audit, proxy (stable)
 cargo build -p pasu-egress   # eBPF stack — Linux only, nightly + bpf-linker
 ```
 
@@ -295,7 +279,7 @@ cargo build -p pasu-egress   # eBPF stack — Linux only, nightly + bpf-linker
 Linux first, **self-hosted, air-gapped-friendly** — eBPF kernel enforcement is
 Linux-only, on a single host, with no Kubernetes and no runtime call-home.
 Telemetry export (OTLP/JSONL) is opt-in and points at your own collector.
-macOS/Windows get the rig integration + UI (cooperative) for development, without
+macOS/Windows get the LLM-API proxy + UI (cooperative) for development, without
 kernel enforcement.
 
 ## Contributing
@@ -309,8 +293,6 @@ pasu is a security tool that runs in the kernel. Please report vulnerabilities
 privately — see [SECURITY.md](SECURITY.md).
 
 ## Acknowledgements
-
-- Built with [rig](https://github.com/0xPlaygrounds/rig) (`rig-core`), licensed under MIT.
 - The policy syntax is inspired by [Falco](https://github.com/falcosecurity/falco)'s rule
   format. pasu is not affiliated with or endorsed by the Falco project or the CNCF.
 
