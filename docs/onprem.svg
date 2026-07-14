@@ -1,0 +1,83 @@
+<svg viewBox="0 0 940 480" xmlns="http://www.w3.org/2000/svg" role="img" font-family="ui-sans-serif, system-ui, -apple-system, Segoe UI, Roboto, sans-serif">
+<title>On-prem AI agent — before and after pasu</title>
+<desc>온프렘·망분리 환경에서 pasu 적용 전후 비교. 적용 전: 에이전트의 도구 호출·egress를 걸러줄 가드 지점이 없음 — 클라우드/SaaS 가드는 망분리에서 못 쓰고 방화벽은 all-or-nothing이라 유출·오작동을 세밀하게 못 막음. 적용 후: 한 호스트에서 pasu-proxy(② 도구 가드)와 eBPF 커널 egress(③ 강제, 기본 차단)와 감사(①)를 함께 제공 — 허용된 내부 LLM만 통과하고, 프록시를 우회한 egress는 커널이 drop, 외부 연결 없음.</desc>
+
+<defs>
+  <linearGradient id="kg" x1="0" y1="0" x2="1" y2="0"><stop offset="0" stop-color="#3a4254"/><stop offset="1" stop-color="#232836"/></linearGradient>
+  <marker id="ag" markerWidth="9" markerHeight="9" refX="6.5" refY="4" orient="auto"><path d="M0 0 L8 4 L0 8 Z" fill="#8a92a6"/></marker>
+  <marker id="ab" markerWidth="9" markerHeight="9" refX="6.5" refY="4" orient="auto"><path d="M0 0 L8 4 L0 8 Z" fill="#3f7ef7"/></marker>
+  <marker id="ar" markerWidth="9" markerHeight="9" refX="6.5" refY="4" orient="auto"><path d="M0 0 L8 4 L0 8 Z" fill="#e5484d"/></marker>
+</defs>
+
+<rect x="0" y="0" width="940" height="480" rx="18" fill="#f7f8fc" stroke="#e6e8f0" stroke-width="1.5"/>
+<text x="28" y="38" font-size="19" font-weight="800" fill="#1f2430">On-prem AI agent — before / after pasu</text>
+<text x="28" y="60" font-size="12" fill="#5b6478">Cloud/SaaS guards can't run air-gapped; K8s policy engines are heavy. pasu puts tool-intent + kernel egress + audit on one host.</text>
+
+<!-- ===================== LEFT: without pasu ===================== -->
+<rect x="24" y="80" width="436" height="380" rx="14" fill="#ffffff" stroke="#e6e8f0"/>
+<circle cx="48" cy="107" r="5" fill="#e5484d"/>
+<text x="60" y="112" font-size="14" font-weight="700" fill="#3a3f52">Without pasu</text>
+<text x="60" y="130" font-size="11" fill="#6b7488">ungoverned · all-or-nothing</text>
+
+<rect x="44" y="146" width="396" height="196" rx="12" fill="none" stroke="#c9d0e6" stroke-width="1.5" stroke-dasharray="4 4"/>
+<text x="60" y="167" font-size="11" fill="#6b7488">on-prem host · air-gapped</text>
+
+<rect x="62" y="196" width="116" height="58" rx="12" fill="#ffffff" stroke="#c9d0e6"/>
+<text x="120" y="221" font-size="14" font-weight="700" text-anchor="middle" fill="#1f2430">AI agent</text>
+<text x="120" y="239" font-size="10" text-anchor="middle" fill="#6b7488">tools · egress</text>
+
+<text x="245" y="228" font-size="10.5" font-weight="700" text-anchor="middle" fill="#c0333a">no guard point</text>
+<text x="245" y="242" font-size="9" text-anchor="middle" fill="#c0333a">nothing filters this</text>
+
+<rect x="322" y="184" width="102" height="38" rx="8" fill="#ffffff" stroke="#c9d0e6"/>
+<text x="373" y="207" font-size="11" text-anchor="middle" fill="#1f2430">internal LLM</text>
+<rect x="322" y="266" width="102" height="38" rx="8" fill="#fbe9ea" stroke="#e5484d"/>
+<text x="373" y="289" font-size="11" text-anchor="middle" fill="#c0333a">exfil · misuse</text>
+
+<line x1="178" y1="216" x2="318" y2="203" stroke="#8a92a6" stroke-width="2" marker-end="url(#ag)"/>
+<line x1="178" y1="232" x2="318" y2="283" stroke="#8a92a6" stroke-width="2" marker-end="url(#ag)"/>
+
+<text x="44" y="372" font-size="11" fill="#5b6478">Cloud/SaaS guards can't run air-gapped; a firewall is</text>
+<text x="44" y="390" font-size="11" fill="#5b6478">all-or-nothing. There is no per-action control.</text>
+
+<!-- ===================== RIGHT: with pasu ===================== -->
+<rect x="480" y="80" width="436" height="380" rx="14" fill="#ffffff" stroke="#e6e8f0"/>
+<circle cx="504" cy="107" r="5" fill="#2fb27a"/>
+<text x="516" y="112" font-size="14" font-weight="700" fill="#0f766e">With pasu</text>
+<text x="516" y="130" font-size="11" fill="#6b7488">one host · no external calls · no K8s</text>
+
+<rect x="500" y="146" width="396" height="196" rx="12" fill="none" stroke="#c9d0e6" stroke-width="1.5" stroke-dasharray="4 4"/>
+<text x="516" y="167" font-size="11" fill="#6b7488">on-prem host (same)</text>
+
+<rect x="510" y="200" width="80" height="50" rx="11" fill="#ffffff" stroke="#c9d0e6"/>
+<text x="550" y="222" font-size="12" font-weight="700" text-anchor="middle" fill="#1f2430">AI agent</text>
+<text x="550" y="238" font-size="9" text-anchor="middle" fill="#6b7488">base_url→proxy</text>
+
+<rect x="628" y="184" width="120" height="40" rx="10" fill="#eef7f4" stroke="#0d9488"/>
+<text x="688" y="200" font-size="11.5" font-weight="700" text-anchor="middle" fill="#0f766e">pasu-proxy ②</text>
+<text x="688" y="215" font-size="9" text-anchor="middle" fill="#0f766e">tool gate · HITL</text>
+
+<rect x="628" y="240" width="120" height="40" rx="10" fill="url(#kg)"/>
+<text x="688" y="256" font-size="11.5" font-weight="700" text-anchor="middle" fill="#e6e8f0">pasu-egress ③</text>
+<text x="688" y="270" font-size="9" text-anchor="middle" fill="#c7cdda">kernel · default-deny</text>
+
+<rect x="792" y="200" width="94" height="40" rx="8" fill="#ffffff" stroke="#c9d0e6"/>
+<text x="839" y="224" font-size="11" text-anchor="middle" fill="#1f2430">internal LLM</text>
+
+<!-- allowed path: agent -> proxy -> kernel -> LLM -->
+<line x1="590" y1="220" x2="626" y2="206" stroke="#3f7ef7" stroke-width="2.5" marker-end="url(#ab)"/>
+<line x1="688" y1="224" x2="688" y2="238" stroke="#3f7ef7" stroke-width="2.5" marker-end="url(#ab)"/>
+<line x1="748" y1="258" x2="790" y2="226" stroke="#3f7ef7" stroke-width="2.5" marker-end="url(#ab)"/>
+<circle cx="770" cy="238" r="8" fill="#2fb27a"/><path d="M766 238 l3 3 5 -6" stroke="#fff" stroke-width="1.7" fill="none" stroke-linecap="round" stroke-linejoin="round"/>
+
+<!-- rogue egress: bypasses proxy, dropped at the kernel doorway -->
+<path d="M556 248 C588 282 590 266 606 260" fill="none" stroke="#e5484d" stroke-width="2" stroke-dasharray="6 4" marker-end="url(#ar)"/>
+<text x="548" y="298" font-size="9.5" fill="#c0333a">own reqwest → bypasses ②, dropped by ③</text>
+<circle cx="620" cy="260" r="9" fill="#e5484d"/><path d="M616 256 l8 8 M624 256 l-8 8" stroke="#fff" stroke-width="2" stroke-linecap="round"/>
+
+<rect x="512" y="308" width="372" height="30" rx="9" fill="#eef1f9" stroke="#cdd3e6"/>
+<text x="524" y="327" font-size="10.5" font-weight="600" fill="#1f2430">pasu-audit ① — every decision logged · on-host (JSONL / OTLP)</text>
+
+<text x="500" y="372" font-size="11" fill="#5b6478">Tool intent (②) + kernel enforcement (③) + audit (①), together.</text>
+<text x="500" y="390" font-size="11" fill="#5b6478">The allowed LLM passes; a bypass egress is dropped by the kernel.</text>
+</svg>
