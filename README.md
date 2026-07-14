@@ -34,11 +34,11 @@ AI 에이전트는 프롬프트 인젝션(prompt injection)에 취약하고, 한
 pasu는 바로 그 환경을 겨냥했습니다. Linux 호스트 한 대에서 전부 돌아가고, 쿠버네티스도 외부 서비스도 필요 없으며, **하나의 정책으로 세 계층**을 함께 겁니다.
 
 <p align="center">
-  <img src="docs/flow.svg" width="760" alt="pasu 계층 egress 방어: 정책 하나가 협조적 rig 훅과 강제적 커널 eBPF 가드를 구동; 훅을 우회한 egress도 커널이 drop, 모든 결정은 감사 기록">
+  <img src="docs/flow.svg" width="760" alt="pasu 계층 egress 방어: 정책 하나가 협조적 프록시와 강제적 커널 eBPF 가드를 구동; 훅을 우회한 egress도 커널이 drop, 모든 결정은 감사 기록">
 </p>
 
 - **① 트레이싱 / 감사** (`pasu-audit`) — 모든 판정을 기록합니다. 파일·SIEM으로는 JSONL, 관측 스택으로는 OpenTelemetry(OTLP) 스팬으로. 데이터를 밖으로 내보내지 않고도 감사 증적이 남습니다.
-- **② 도구 호출 가드 (협조적)** (`pasu-rig` 인프로세스 · `pasu-proxy` LLM-API 프록시) — 선언된 도구 호출을 검사하고, 필요하면 사람이 승인(HITL)하며, LLM egress도 정책으로 거릅니다. rig 훅은 rig 에이전트 전용이고, `pasu-proxy`는 provider 응답의 도구 호출을 파싱해 **프레임워크를 가리지 않습니다**(어떤 SDK든 `base_url`만 바꾸면 됩니다). 맥락은 풍부하지만 이 계층만으로는 우회될 수 있습니다.
+- **② 도구 호출 가드 (협조적)** (`pasu-proxy` LLM-API 프록시) — 에이전트의 `base_url`을 프록시로 향하게 하면, provider 응답의 도구 호출을 파싱해 검사하고 필요하면 사람이 승인(HITL)합니다. **프레임워크를 가리지 않습니다** — 어떤 SDK든 `base_url`만 바꾸면 됩니다. 맥락은 풍부하지만 이 계층만으로는 우회될 수 있습니다.
 - **③ egress 강제 (커널)** (`pasu-egress` / `pasu-ebpf`) — 커널 cgroup egress를 기본 차단합니다. 언어를 가리지 않고 우회도 불가능해서, ②를 빠져나간 트래픽까지 여기서 최종 차단됩니다.
 
 실제로 확인했습니다 — 훅을 우회해 자기 `reqwest`로 나가는 도구도 커널이 drop합니다.
@@ -120,18 +120,7 @@ let app = router(state);   // axum Router — 서빙한 뒤 에이전트 base_ur
 pasu-proxy --policy rules.yaml --listen 127.0.0.1:8788 --upstream https://api.openai.com
 ```
 
-### 더 깊게: 인프로세스 훅 (선택)
-
-rig 에이전트에 가드(도구 게이트 + HITL + LLM egress)와 감사를 붙이려면:
-
-```rust
-use pasu_rig::PasuSecurityHook;
-use pasu_rules::RulesetEngine;
-
-let engine = RulesetEngine::from_yaml(policy_yaml)?;
-let hook = PasuSecurityHook::new(engine).with_sink(audit_sink);   // + .with_approver(ui)
-agent.prompt("do the task").add_hook(hook).await?;
-```
+### 더 깊게: 커널 egress 가드 (Linux)
 
 Linux 커널 egress 가드 — **같은 YAML**을 커널 allowlist로 변환합니다 (전용 cgroup을 쓰고, 루트 cgroup은 절대 금지):
 
@@ -185,9 +174,7 @@ docker build -f deploy/Dockerfile -t pasu-egress:latest .
 | crate | 역할 |
 |-------|------|
 | `pasu-core` | 공유 타입(`Event` / `Verdict`)과 trait(`RuleEngine` · `Layer` · `Approver` · `AuditSink`), 그리고 `Guard` 파사드 |
-| `pasu-rules` | `RuleEngine` — Falco에서 영향받은 YAML 룰셋(allow/deny/ask, 기본 fail-closed) |
-| `pasu-rig` | rig 통합 — `AgentHook`(도구 게이트 + HITL), `HttpClientExt`(LLM egress) |
-| `pasu-proxy` | LLM-API 리버스 프록시 — provider 응답(OpenAI…)의 도구 호출을 파싱해 같은 `Guard`로 가드; 프레임워크 무관(`base_url`만) |
+| `pasu-rules` | `RuleEngine` — Falco에서 영향받은 YAML 룰셋(allow/deny/ask, 기본 fail-closed) || `pasu-proxy` | LLM-API 리버스 프록시 — provider 응답(OpenAI…)의 도구 호출을 파싱해 같은 `Guard`로 가드; 프레임워크 무관(`base_url`만) |
 | `pasu-ui` | 경량 웹 UI — HITL 승인(`/`)과 감사·egress 대시보드(`/audit`, `/egress`) |
 | `pasu-audit` | 감사 sink — JSONL(stderr/파일/SIEM), 인메모리, OpenTelemetry(OTLP 스팬, `otel` feature) |
 | `pasu-egress` · `pasu-ebpf` · `pasu-ebpf-common` | 커널 eBPF cgroup egress — 기본 차단 allowlist, DNS 인식 (Linux) |
@@ -201,9 +188,7 @@ docker build -f deploy/Dockerfile -t pasu-egress:latest .
 핵심 의존성은 재현성을 위해 버전을 고정했습니다.
 
 | 의존성 | 버전 | 라이선스 | 이유 |
-|---|---|---|---|
-| [rig](https://github.com/0xPlaygrounds/rig) (`rig-core`) | git `747b95a6` | MIT | `AgentHook`이 upstream에 병합됐지만 아직 정식 릴리스 전 — rig 다음 릴리스 때 crates.io로 전환 |
-| [aya](https://github.com/aya-rs/aya) (+ `aya-log`, `aya-build`) | git `773ca715` | MIT / Apache-2.0 | aya 다음 릴리스 전까지 고정 — 고정하지 않은 git 의존이 upstream API 변경으로 CI를 깨뜨린 적 있음 |
+|---|---|---|---|| [aya](https://github.com/aya-rs/aya) (+ `aya-log`, `aya-build`) | git `773ca715` | MIT / Apache-2.0 | aya 다음 릴리스 전까지 고정 — 고정하지 않은 git 의존이 upstream API 변경으로 CI를 깨뜨린 적 있음 |
 | [Falco](https://github.com/falcosecurity/falco) | — | — | **의존성이 아님** — 룰 포맷 아이디어만 빌렸을 뿐 Falco 코드는 없음 |
 
 ## 지표
@@ -222,25 +207,24 @@ MVP — 엔진, 정책, HITL, 감사, 배포, 벤치마크까지 갖췄습니다
 |---|---|:---:|
 | 커널 기본 차단 allowlist (DNS 인식) | egress/ebpf | ✅ |
 | 정책 언어 (YAML) | rules | ✅ |
-| 도구 게이트 · HITL · LLM egress | rig | ✅ |
-| LLM-API 프록시 — 도구 호출 가드 (어떤 SDK든) | proxy | ✅ OpenAI · 논스트리밍 |
+| LLM-API 프록시 — 도구 호출 가드 · HITL (어떤 SDK든) | proxy | ✅ OpenAI · 논스트리밍 |
 | 승인 + 감사 UI | ui | ✅ |
 | 감사 sink (JSONL / OTLP) | audit | ✅ |
 | config 기반 daemon + systemd | egress + packaging | ✅ |
 | **정책 파일 하나 → 양 계층** | daemon | ✅ |
 
-다음 계획: 프록시의 SSE(스트리밍) 재조립과 Anthropic·Gemini 포맷, eBPF로 LLM 트래픽을 프록시로 강제 경유; 정밀 DNS 응답 스니핑(toFQDN — 커널에서 접미 호스트까지 처리), eBPF 계층 감사 emit, 컨트롤 플레인 API와 더 나은 UI, 그리고 crates.io 릴리스(현재 rig는 git 고정).
+다음 계획: 프록시의 SSE(스트리밍) 재조립과 Anthropic·Gemini 포맷, eBPF로 LLM 트래픽을 프록시로 강제 경유; 정밀 DNS 응답 스니핑(toFQDN — 커널에서 접미 호스트까지 처리), eBPF 계층 감사 emit, 컨트롤 플레인 API와 더 나은 UI, 그리고 crates.io 릴리스(현재 aya는 git 고정).
 
 ## 개발
 
 ```bash
-cargo test              # 포터블 크레이트: core, rig, rules, ui, audit, proxy (stable)
+cargo test              # 포터블 크레이트: core, rules, ui, audit, proxy (stable)
 cargo build -p pasu-egress   # eBPF 스택 — Linux 전용, nightly + bpf-linker
 ```
 
 ## 플랫폼
 
-Linux 우선, **셀프호스티드·망분리 친화적**입니다. eBPF 커널 강제는 Linux 전용이고, 호스트 한 대에서 쿠버네티스나 런타임 외부 연결 없이 돌아갑니다. 텔레메트리 전송(OTLP/JSONL)은 선택이며 대상은 여러분의 collector입니다. macOS·Windows에서는 개발용으로 rig 통합과 UI(협조적 계층)만 쓸 수 있고, 커널 강제는 없습니다.
+Linux 우선, **셀프호스티드·망분리 친화적**입니다. eBPF 커널 강제는 Linux 전용이고, 호스트 한 대에서 쿠버네티스나 런타임 외부 연결 없이 돌아갑니다. 텔레메트리 전송(OTLP/JSONL)은 선택이며 대상은 여러분의 collector입니다. macOS·Windows에서는 개발용으로 LLM-API 프록시와 UI(협조적 계층)만 쓸 수 있고, 커널 강제는 없습니다.
 
 ## 기여
 
@@ -251,8 +235,6 @@ Linux 우선, **셀프호스티드·망분리 친화적**입니다. eBPF 커널 
 pasu는 커널에서 동작하는 보안 도구입니다. 취약점은 공개 이슈 대신 비공개로 제보해 주세요 — [SECURITY.md](SECURITY.md).
 
 ## 감사의 글
-
-- [rig](https://github.com/0xPlaygrounds/rig)(`rig-core`, MIT)를 기반으로 만들었습니다.
 - 정책 문법은 [Falco](https://github.com/falcosecurity/falco)의 룰 포맷에서 아이디어를 얻었습니다. pasu는 Falco 프로젝트나 CNCF와 제휴하거나 보증받은 관계가 아닙니다.
 
 ## 라이선스

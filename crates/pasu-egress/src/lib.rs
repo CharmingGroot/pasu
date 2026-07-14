@@ -1,7 +1,7 @@
 //! pasu-egress — control plane for the kernel egress guard (eBPF loader + policy).
 //!
 //! [`EgressLayer`] adapts a [`RuleEngine`] into [`pasu_core::Layer`], so egress
-//! decisions share the same `Verdict` model as the rig (cooperative) layer. The
+//! decisions share the same `Verdict` model as the proxy (cooperative) layer. The
 //! eBPF program enforces in-kernel (BLOCK map); this is the control-plane policy
 //! view — the seam where a DNS-aware resolver or a userspace fallback will plug
 //! in. Design: docs/architecture.md, docs/repo-structure.md

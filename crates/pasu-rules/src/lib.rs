@@ -7,7 +7,7 @@
 //!
 //! The Falco dependency (its rich condition language, macros, lists) is a future
 //! extension; this MVP keeps a minimal matcher. Isolating the engine here keeps
-//! the trait's callers (pasu-rig, pasu-egress) decoupled from the rule format —
+//! the trait's callers (pasu-proxy, pasu-egress) decoupled from the rule format —
 //! swap this for OPA / a DSL later without touching them. Design: docs/rules.md
 
 use std::net::Ipv4Addr;
@@ -62,7 +62,7 @@ pub struct Ruleset {
 
 /// The kernel-enforceable part of a ruleset: the egress allowlist derived from
 /// its `allow` rules. This is how "one policy file" reaches the eBPF layer —
-/// the same YAML the rig hook evaluates is *lowered* to the kernel's
+/// the same YAML the proxy evaluates is *lowered* to the kernel's
 /// default-deny allowlist.
 #[derive(Debug, Default, PartialEq)]
 pub struct EgressAllowlist {

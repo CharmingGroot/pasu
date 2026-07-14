@@ -7,7 +7,7 @@ the short version for contributors.)
 ## Ground rules
 
 - **Conventional Commits**: `type(scope): description`. Scope aligns with area —
-  `rig` / `egress` / `ebpf` / `rules` / `ui` / `audit` / `core` / `ci` / `docs`.
+  `proxy` / `egress` / `ebpf` / `rules` / `ui` / `audit` / `core` / `ci` / `docs`.
 - **DCO sign-off**: commit with `git commit -s` (you certify you wrote it).
   Contribute under your own name — no AI-authorship attribution.
 - **Branch → PR → CI green → merge.** No direct pushes to `main`.
@@ -27,7 +27,7 @@ the short version for contributors.)
 
 | target | toolchain | command |
 |--------|-----------|---------|
-| portable crates (core, rig, rules, ui, audit) | stable | `cargo test` |
+| portable crates (core, rules, ui, audit, proxy) | stable | `cargo test` |
 | eBPF stack (egress, ebpf) | Linux + nightly + `bpf-linker` | `cargo build -p pasu-egress` |
 
 The eBPF stack is kept out of `default-members`, so `cargo test` and the stable

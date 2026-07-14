@@ -25,9 +25,9 @@ pub struct Event {
 
 #[derive(Debug, Clone)]
 pub enum EventKind {
-    /// rig AgentHook — a tool call.
+    /// LLM-API proxy (parsed tool_call) — a tool call.
     ToolCall { name: String, input: String },
-    /// rig HttpClientExt / eBPF — outbound network.
+    /// eBPF / proxy — outbound network.
     Egress { host: String, port: u16 },
 }
 
@@ -37,7 +37,7 @@ pub trait RuleEngine {
     fn evaluate(&self, event: &Event) -> Verdict;
 }
 
-/// Common interface for layers (rig integration / egress / eBPF). Runtime-toggleable.
+/// Common interface for layers (LLM-API proxy / egress / eBPF). Runtime-toggleable.
 pub trait Layer {
     fn name(&self) -> &str;
     fn enabled(&self) -> bool;
@@ -48,7 +48,7 @@ pub trait Layer {
 /// action, `false` to block it. **Fail-closed by contract**: on any doubt (a
 /// closed channel, a timeout, an error), return false.
 ///
-/// Lives in core so both the rig hook (pasu-rig) and UI-backed approvers
+/// Lives in core so both the LLM-API proxy (pasu-proxy) and UI-backed approvers
 /// (pasu-ui) implement the same trait.
 pub trait Approver: Send + Sync {
     fn approve(&self, reason: &str) -> impl core::future::Future<Output = bool> + Send;
@@ -76,7 +76,7 @@ pub enum VerdictKind {
 /// by the layer that made the call. Serializable (JSONL, SIEM, UI stream).
 #[derive(Debug, Clone, Serialize)]
 pub struct AuditRecord {
-    /// Which layer decided: e.g. "rig-tool", "rig-egress", "egress".
+    /// Which layer decided: e.g. "proxy-tool", "egress".
     pub layer: String,
     /// What was evaluated: a tool name, or "host:port".
     pub subject: String,
@@ -116,8 +116,8 @@ pub trait AuditSink: Send + Sync {
 /// The guard core: the one place that turns an [`Event`] into a final
 /// [`Verdict`] — evaluate → audit → resolve `Ask` via the [`Approver`].
 ///
-/// This is the framework-agnostic **port** every adapter calls. A rig hook, a
-/// Python client over the wire, or any future SDK adapter maps its native event
+/// This is the framework-agnostic **port** every adapter calls. The LLM-API
+/// proxy, a Python client over the wire, or any future adapter maps its native event
 /// onto [`Event`] and calls [`Guard::decide`]; none of them re-implement the
 /// evaluate/HITL/audit orchestration. Keeping it here (not in an adapter) is
 /// what makes new frameworks a thin translation layer.
@@ -294,8 +294,8 @@ mod tests {
                 input: "{}".into(),
             },
         };
-        let rec = AuditRecord::new("rig-tool", &ev, &Verdict::Deny("destructive".into()));
-        assert_eq!(rec.layer, "rig-tool");
+        let rec = AuditRecord::new("proxy-tool", &ev, &Verdict::Deny("destructive".into()));
+        assert_eq!(rec.layer, "proxy-tool");
         assert_eq!(rec.subject, "rm_rf");
         assert_eq!(rec.verdict, VerdictKind::Deny);
         assert_eq!(rec.reason.as_deref(), Some("destructive"));

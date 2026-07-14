@@ -19,7 +19,7 @@ use pasu_rules::RulesetEngine;
 #[derive(Debug, Parser)]
 #[command(about = "LLM-API guard proxy — parses tool calls and blocks denied ones")]
 struct Opt {
-    /// The pasu policy YAML — the SAME file your agent's rig hook / daemon loads.
+    /// The pasu policy YAML — the SAME file the daemon loads.
     #[clap(short, long)]
     policy: std::path::PathBuf,
     /// Address to listen on. The agent points its `base_url` here.

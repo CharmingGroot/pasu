@@ -6,7 +6,7 @@ edition = "2024"
 license.workspace = true
 
 # The composition root for "one policy file, two layers": it reads the same
-# rules YAML the rig hook evaluates and lowers it to the kernel egress guard.
+# rules YAML the proxy evaluates and lowers it to the kernel egress guard.
 # As the app-level binary it may depend on concrete crates (pasu-rules,
 # pasu-egress); the library crates themselves stay decoupled behind pasu-core.
 [dependencies]

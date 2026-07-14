@@ -90,7 +90,7 @@ mod tests {
                 input: "{}".into(),
             },
         };
-        AuditRecord::new("rig-tool", &ev, &Verdict::Deny("destructive".into()))
+        AuditRecord::new("proxy-tool", &ev, &Verdict::Deny("destructive".into()))
     }
 
     fn egress_allow() -> AuditRecord {
