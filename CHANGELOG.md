@@ -8,6 +8,10 @@ its first tagged release.
 ## [Unreleased]
 
 ### Added
+- **HITL approval UI wired into `pasu-proxy`** — run the proxy with `--ui <addr>`
+  to serve the pasu-ui approval queue (`/`) and audit view (`/audit`); a
+  `Verdict::Ask` now awaits a browser approve/deny instead of failing closed.
+  Decisions fan out to both stderr JSONL and the UI feed.
 - **Anthropic & Gemini response parsing in `pasu-proxy`** — the tool-call guard
   now understands all three provider wire formats (OpenAI Chat Completions,
   Anthropic Messages, Gemini `generateContent`), covering effectively every SDK.

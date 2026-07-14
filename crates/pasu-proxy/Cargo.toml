@@ -21,8 +21,9 @@ tokio = { workspace = true, features = ["rt-multi-thread", "macros", "net"] }
 serde = { workspace = true }
 serde_json = { workspace = true }
 
-# Binary-only (composition root): the rule engine + CLI + error context.
+# Binary-only (composition root): the rule engine + HITL UI + CLI + error context.
 pasu-rules = { path = "../pasu-rules" }
+pasu-ui = { path = "../pasu-ui" }
 clap = { workspace = true, features = ["derive"] }
 anyhow = { workspace = true, default-features = true }
 

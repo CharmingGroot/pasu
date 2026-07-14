@@ -1397,6 +1397,7 @@ dependencies = [
  "clap",
  "pasu-core",
  "pasu-rules",
+ "pasu-ui",
  "reqwest",
  "serde",
  "serde_json",
