@@ -36,7 +36,11 @@ struct Opt {
 fn parse_provider(s: &str) -> anyhow::Result<Provider> {
     match s {
         "openai" => Ok(Provider::OpenAi),
-        other => anyhow::bail!("unsupported provider {other:?} (supported: openai)"),
+        "anthropic" => Ok(Provider::Anthropic),
+        "gemini" => Ok(Provider::Gemini),
+        other => {
+            anyhow::bail!("unsupported provider {other:?} (supported: openai, anthropic, gemini)")
+        }
     }
 }
 

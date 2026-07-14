@@ -112,7 +112,7 @@ let state = Arc::new(ProxyState {
 let app = router(state);   // axum Router — 서빙한 뒤 에이전트 base_url을 여기로
 ```
 
-지금은 OpenAI 호환·논스트리밍만 지원합니다. 스트리밍(SSE) 응답은 당분간 그대로 통과하고(가드 미적용), Anthropic·Gemini 포맷은 다음 차례입니다.
+OpenAI 호환·Anthropic·Gemini의 논스트리밍 응답을 지원합니다(세 포맷이 사실상 모든 SDK를 커버). 스트리밍(SSE) 응답은 당분간 그대로 통과하고(가드 미적용), 재조립은 다음 차례입니다.
 
 사이드카로 배포할 수도 있습니다 — 슬림하고 **권한이 필요 없는** 이미지([`deploy/proxy/Dockerfile`](deploy/proxy/Dockerfile))와 에이전트+프록시를 한 파드에 담은 예시([`deploy/proxy/k8s-sidecar.yaml`](deploy/proxy/k8s-sidecar.yaml), 에이전트 `base_url` → `localhost`). 직접 실행도 됩니다:
 
@@ -207,7 +207,7 @@ MVP — 엔진, 정책, HITL, 감사, 배포, 벤치마크까지 갖췄습니다
 |---|---|:---:|
 | 커널 기본 차단 allowlist (DNS 인식) | egress/ebpf | ✅ |
 | 정책 언어 (YAML) | rules | ✅ |
-| LLM-API 프록시 — 도구 호출 가드 · HITL (어떤 SDK든) | proxy | ✅ OpenAI · 논스트리밍 |
+| LLM-API 프록시 — 도구 호출 가드 · HITL (어떤 SDK든) | proxy | ✅ OpenAI · Anthropic · Gemini · 논스트리밍 |
 | 승인 + 감사 UI | ui | ✅ |
 | 감사 sink (JSONL / OTLP) | audit | ✅ |
 | config 기반 daemon + systemd | egress + packaging | ✅ |
