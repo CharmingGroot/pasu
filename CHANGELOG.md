@@ -15,8 +15,12 @@ its first tagged release.
 - **Anthropic & Gemini response parsing in `pasu-proxy`** — the tool-call guard
   now understands all three provider wire formats (OpenAI Chat Completions,
   Anthropic Messages, Gemini `generateContent`), covering effectively every SDK.
-  Select with `--provider {openai,anthropic,gemini}`. Non-streaming responses;
-  SSE reassembly is still pending.
+  Select with `--provider {openai,anthropic,gemini}`.
+- **Streaming (SSE) tool-call inspection** — tool calls split across SSE deltas
+  (OpenAI `delta.tool_calls`, Anthropic `input_json_delta`, Gemini per-chunk
+  `functionCall`) are reassembled and judged by the same policy. The full stream
+  is buffered before relay (incremental relay is future work), closing the gap
+  where streaming responses passed through unguarded.
 - **One policy file for both layers** — `pasu-daemon --policy rules.yaml` lowers
   the same ruleset the proxy evaluates into the kernel egress allowlist
   (IPv4 → static, exact host → DNS-resolved, `.suffix` → reported as
