@@ -20,27 +20,28 @@
 
 <p align="center"><a href="README.md">한국어</a></p>
 
-> **Control an agent's egress without trusting the agent — inside your own network.**
-> An in-process hook only sees what the agent *declares*; a tool that opens its own
-> socket walks right past it. pasu backs that cooperative layer with a **kernel eBPF
-> guard the agent cannot bypass**, and records every decision for audit. It runs
-> entirely on-host — nothing is sent to a SaaS. **enforcing > cooperative.**
+> **Control an agent's egress without trusting the agent.**
+> A cooperative guard only sees what the agent *declares*; a tool that opens its own
+> socket walks right past it. pasu backs that layer with a **kernel eBPF guard the
+> agent cannot bypass**, and records every decision for audit. It runs entirely
+> on-host — nothing leaves your network. **enforcing > cooperative.**
 
 ---
 
 ## Why pasu
 
-AI agents get prompt-injected, and a compromised agent will happily exfiltrate
-your data. If you run agents **on-premises, air-gapped, or under compliance
-requirements**, two things follow: you often *cannot* route agent traffic to a
-cloud/SaaS guard, and you need **layered defense plus audit evidence** — not a
+AI agents get prompt-injected, and a compromised agent becomes an exfiltration
+channel. If you run agents **on-premises, air-gapped, or under compliance
+requirements**, two more constraints apply: you *cannot* route agent traffic to
+a cloud/SaaS guard, and you need **layered defense plus audit evidence** — not a
 single cooperative check that a rogue tool slips past.
 
-pasu is built for that setting: it runs entirely on one Linux host, needs **no
-Kubernetes and no external service**, and applies **three layers, one policy**:
+pasu is built to work within those constraints: it runs entirely on one Linux
+host, needs **no Kubernetes and no external service**, and applies **three
+layers, one policy**:
 
 <p align="center">
-  <img src="docs/flow.svg" width="760" alt="pasu layered egress defense: one policy drives a cooperative proxy and an enforcing kernel eBPF guard; a rogue egress that bypasses the hook is still dropped by the kernel, and every decision is recorded for audit">
+  <img src="docs/flow.svg" width="760" alt="pasu layered egress defense: one policy drives a cooperative proxy and an enforcing kernel eBPF guard; a rogue egress that bypasses the proxy is still dropped by the kernel, and every decision is recorded for audit">
 </p>
 
 - **① Trace / audit** (`pasu-audit`): every decision is recorded — JSONL to a
@@ -67,13 +68,10 @@ Tool-call guard, kernel egress, and audit on a single self-hosted box:
   <img src="docs/onprem.svg" width="820" alt="On-prem AI agent before and after pasu: without pasu there is no guard point for the agent's tool calls and egress (cloud/SaaS guards can't run air-gapped, a firewall is all-or-nothing), so exfiltration and misuse can't be controlled per action; with pasu, one host runs pasu-proxy (layer 2 tool gate), eBPF kernel egress (layer 3 default-deny enforcement) and audit (layer 1) together, so only the allowed internal LLM passes and a bypass egress is dropped by the kernel">
 </p>
 
-- **No Kubernetes, no cloud.** One Linux host; a `.deb`-free single binary path
-  via `pasu run`. K8s-native network policy engines are powerful but heavy for a
-  single on-prem server; SaaS agent guards can't run inside an air-gapped network.
+- **No Kubernetes, no cloud.** One Linux host; wrap any agent with `pasu run`.
 - **Runs air-gapped.** No runtime call-home; telemetry export is opt-in and points
-  at *your* collector.
-- **Kernel-inline egress + agent intent + audit** together — most tools give you
-  one of the three.
+  at your own collector.
+- **Kernel-inline egress + agent intent + audit**, together on one host.
 - **Apache-2.0**, auditable Rust, every crate behind traits.
 
 ## Limitations
@@ -167,10 +165,10 @@ sudo pasu-daemon --policy rules.yaml --cgroup-path /sys/fs/cgroup/my-agent
 sudo pasu-egress --cgroup-path /sys/fs/cgroup/my-agent --allow-domain api.openai.com
 ```
 
-Allow rules with an IPv4 become static entries, exact hostnames are resolved
-(and re-resolved), and suffix patterns (`.openai.com`) are reported — they stay
-hook-layer-only until DNS-response sniffing lands. The kernel side is
-default-deny, so lowering is only ever *narrower* than the policy.
+Allow rules with an IPv4 become static entries, and exact hostnames are resolved
+(and re-resolved). Suffix patterns (`.openai.com`) can't be lowered to the kernel
+yet and are only reported — DNS-response sniffing will close that. The kernel
+side is default-deny, so lowering is only ever *narrower* than the policy.
 
 Add `--admin-socket /run/pasu.sock` to inspect and edit the live guard without a
 restart (this is what the UI talks to):
