@@ -1,0 +1,66 @@
+# pasu-proxy as a per-pod sidecar — an LLM-API guard for one agent.
+#
+# The agent points its LLM `base_url` at the sidecar on localhost (same pod =
+# shared network namespace); the proxy forwards to the real provider and blocks
+# denied tool calls (fail-closed). Pure userspace: NO privileges, NO cgroup, NO
+# hostPath — unlike the eBPF egress sidecar (deploy/k8s/sidecar.yaml).
+#
+# Pair with the eBPF egress sidecar for defense-in-depth: the proxy guards
+# tool-call intent (what the model asked for), the kernel guards egress effect
+# (where traffic actually goes, unbypassable).
+#
+# This is an EXAMPLE (not validated against a live cluster). Adjust the image,
+# provider, upstream, policy, and the agent's base_url env var.
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: pasu-policy
+data:
+  rules.yaml: |
+    rules:
+      - name: allow-search
+        match: { tool: web_search }
+        action: allow
+      - name: confirm-transfer
+        match: { tool: transfer_funds }
+        action: ask
+    default: deny            # fail-closed
+---
+apiVersion: v1
+kind: Pod
+metadata:
+  name: agent-guarded-proxy
+  labels: { app: agent-guarded-proxy }
+spec:
+  containers:
+    - name: agent
+      image: your-registry/your-agent:latest
+      env:
+        # Point the OpenAI-compatible client at the sidecar (localhost, same pod).
+        # The proxy forwards /v1/... to --upstream, so keep the /v1 suffix here.
+        - name: OPENAI_BASE_URL
+          value: "http://localhost:8788/v1"
+      # ... your agent command ...
+
+    - name: pasu-proxy
+      image: your-registry/pasu-proxy:latest
+      args:
+        - "--policy=/etc/pasu/rules.yaml"
+        - "--listen=0.0.0.0:8788"
+        - "--upstream=https://api.openai.com"
+        - "--provider=openai"
+      ports:
+        - containerPort: 8788
+      volumeMounts:
+        - name: policy
+          mountPath: /etc/pasu
+      # No privileges: an ordinary HTTP service.
+      securityContext:
+        allowPrivilegeEscalation: false
+        readOnlyRootFilesystem: true
+        runAsNonRoot: true
+        runAsUser: 65532
+  volumes:
+    - name: policy
+      configMap:
+        name: pasu-policy

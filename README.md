@@ -111,6 +111,15 @@ let app = router(state);   // axum Router — serve it, then point the agent's b
 OpenAI-compatible, non-streaming today; streaming (SSE) responses pass through
 unguarded for now, and Anthropic/Gemini formats are next.
 
+Deploy it as a sidecar — a slim, **unprivileged** image
+([`deploy/proxy/Dockerfile`](deploy/proxy/Dockerfile)) and an agent + proxy pod
+([`deploy/proxy/k8s-sidecar.yaml`](deploy/proxy/k8s-sidecar.yaml), the agent's
+`base_url` → `localhost`). Runnable directly too:
+
+```bash
+pasu-proxy --policy rules.yaml --listen 127.0.0.1:8788 --upstream https://api.openai.com
+```
+
 ### Deeper: in-process hooks (optional)
 
 Guard a rig agent (tool gate + HITL + LLM egress) with audit:
