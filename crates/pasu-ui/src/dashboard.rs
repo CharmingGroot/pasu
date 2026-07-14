@@ -127,6 +127,8 @@ async fn deny(State(ui): State<EgressUi>, Form(f): Form<IpForm>) -> Redirect {
 }
 
 async fn dashboard(State(ui): State<EgressUi>) -> Html<String> {
+    // The egress dashboard is, by definition, mounted here — always show its tab.
+    let egress_tab = true;
     let status_html = match ui.admin.status().await {
         Ok(s) => render_status(&s),
         Err(e) => format!(
@@ -141,7 +143,11 @@ async fn dashboard(State(ui): State<EgressUi>) -> Html<String> {
         .as_deref()
         .map(render_policy)
         .unwrap_or_default();
-    Html(page("/egress", &format!("{status_html}{policy_html}")))
+    Html(page(
+        "/egress",
+        &format!("{status_html}{policy_html}"),
+        egress_tab,
+    ))
 }
 
 fn render_status(s: &EgressStatus) -> String {
