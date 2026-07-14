@@ -61,7 +61,7 @@ declared-only cooperative guard misses.
 
 ## On-prem & regulated fit
 
-The uncommon part is the *combination*, on a single self-hosted box:
+Tool-call guard, kernel egress, and audit on a single self-hosted box:
 
 <p align="center">
   <img src="docs/onprem.svg" width="820" alt="On-prem AI agent before and after pasu: without pasu there is no guard point for the agent's tool calls and egress (cloud/SaaS guards can't run air-gapped, a firewall is all-or-nothing), so exfiltration and misuse can't be controlled per action; with pasu, one host runs pasu-proxy (layer 2 tool gate), eBPF kernel egress (layer 3 default-deny enforcement) and audit (layer 1) together, so only the allowed internal LLM passes and a bypass egress is dropped by the kernel">
@@ -76,17 +76,15 @@ The uncommon part is the *combination*, on a single self-hosted box:
   one of the three.
 - **Apache-2.0**, auditable Rust, every crate behind traits.
 
-## Limitations (honestly)
+## Limitations
 
-What pasu **doesn't** do — know this before adopting:
-
-- **Kernel enforcement is Linux-only.** On macOS/Windows only the cooperative layer (the LLM-API proxy) runs; there is no egress enforcement.
-- **eBPF needs privileges** (root / CAP_BPF). The proxy layer runs unprivileged, but the enforcing layer needs kernel capabilities.
-- **The proxy layer is bypassable on its own** — which is why the kernel layer exists. If a tool opens its own socket, the proxy can't see it and the kernel makes the final call.
-- **Egress decisions are L3/L4 (IP / domain).** No TLS-payload or L7 content inspection (DLP) — so exfiltration to an *allowed* domain (EchoLeak-style) is **not** stopped by the allowlist.
-- **Tool calls in streaming (SSE) responses aren't inspected yet** (they pass through). Non-streaming only; DNS-awareness is best-effort (precise toFQDN is planned).
-- **It does not stop prompt injection or model misbehavior itself.** pasu governs egress and tool intent, not the model's behavior — it's a last line of defense, not an input filter.
-- **Still an MVP.** No security certification, no production references — a working, self-hostable reference for this niche, not a turnkey certified appliance.
+- **Linux only** — eBPF kernel enforcement runs on Linux. macOS/Windows support the cooperative layer (the LLM-API proxy) only, with no kernel egress enforcement.
+- **Requires kernel privileges** — the eBPF layer needs root or CAP_BPF (the proxy layer runs unprivileged).
+- **Proxy layer is bypassable on its own** — a tool that opens its own socket is invisible to the proxy; the kernel layer covers that case.
+- **L3/L4 egress control** — IP/domain level, with no TLS-payload or L7 content (DLP) inspection. Exfiltration to an already-allowed domain is not stopped by the allowlist.
+- **No streaming (SSE) support** — only non-streaming responses have their tool calls inspected. DNS-awareness is best-effort.
+- **Not an input-layer defense** — prompt injection and model misbehavior are out of scope. pasu is a last line of defense over egress and tool intent.
+- **Early stage (MVP)** — no security certification, no production references.
 
 ## Policy (Falco-inspired YAML)
 
