@@ -10,16 +10,19 @@
 //! covers every SDK — no per-SDK hook. Intent only; a tool's actual egress is
 //! enforced by the kernel layer (`pasu-egress`).
 //!
-//! Scope today: OpenAI (+ compatible), non-streaming. Streaming (SSE) responses
-//! pass through unguarded (follow-up: SSE reassembly). Anthropic / Gemini extend
-//! [`parse::Provider`].
+//! Scope today: OpenAI (+ compatible), Anthropic, and Gemini — non-streaming
+//! bodies and streaming (SSE) bodies alike. The proxy buffers the full response,
+//! so SSE tool calls are reassembled from their deltas and guarded the same way
+//! (no incremental relay).
 //!
 //! [`Guard`]: pasu_core::Guard
 
 pub mod inspect;
 pub mod parse;
 pub mod proxy;
+pub mod stream;
 
 pub use inspect::{inspect, Inspection};
 pub use parse::{extract, Provider, ToolCall};
 pub use proxy::{router, ProxyState};
+pub use stream::extract_stream;

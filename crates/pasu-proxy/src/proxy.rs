@@ -17,6 +17,7 @@ use pasu_core::{Approver, Guard, RuleEngine, Verdict};
 
 use crate::inspect::inspect;
 use crate::parse::{extract, Provider};
+use crate::stream::{extract_stream, is_event_stream};
 
 /// Shared proxy state: the guard (policy + HITL + audit), an HTTP client, the
 /// upstream provider base URL, and which wire format to parse.
@@ -59,8 +60,15 @@ where
         Err(_) => return blocked("pasu-proxy: upstream request failed"),
     };
 
-    // Inspect only bodies that parse as a tool-call-bearing response.
-    if let Some(calls) = extract(&upstream.body, state.provider) {
+    // Inspect only bodies that parse as a tool-call-bearing response. The full
+    // body is buffered either way, so streaming (SSE) responses are reassembled
+    // and guarded just like non-streaming ones.
+    let calls = if is_event_stream(upstream.content_type.as_deref()) {
+        extract_stream(&upstream.body, state.provider)
+    } else {
+        extract(&upstream.body, state.provider)
+    };
+    if let Some(calls) = calls {
         if !calls.is_empty() {
             let result = inspect(&state.guard, &calls).await;
             if let Verdict::Deny(reason) = &result.overall {
