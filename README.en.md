@@ -46,9 +46,11 @@ Kubernetes and no external service**, and applies **three layers, one policy**:
 - **① Trace / audit** (`pasu-audit`): every decision is recorded — JSONL to a
   file/SIEM, or OpenTelemetry (OTLP) spans to *your own* stack. Audit evidence
   without anything leaving your network.
-- **② Tool-call guard — cooperative, in-process** (`pasu-rig`): gate declared
-  tool calls + human-in-the-loop approval, LLM egress by policy. Rich context;
-  bypassable on its own.
+- **② Tool-call guard — cooperative** (`pasu-rig` in-process · `pasu-proxy`
+  LLM-API proxy): gate declared tool calls + human-in-the-loop approval, LLM
+  egress by policy. The rig hook is rig-specific; **`pasu-proxy` parses the tool
+  calls in the provider response — framework-agnostic** (any SDK, `base_url`
+  only). Rich context; bypassable on its own.
 - **③ Egress enforcement — kernel** (`pasu-egress` / `pasu-ebpf`): default-deny
   cgroup egress in the kernel. Language-agnostic and **unbypassable** — it
   catches whatever slips past layer ②.
@@ -118,6 +120,41 @@ sudo pasu run --policy rules.yaml -- npx some-agent "task" # language-agnostic
 
 Everything the policy doesn't allow is dropped by the kernel — even if the
 agent (or a prompt-injected tool) opens its own sockets.
+
+### Guard tool calls for any SDK — the LLM-API proxy
+
+Point your agent's `base_url` at `pasu-proxy`. It forwards to the real provider,
+parses the tool calls the model returns, and blocks any the policy denies
+(fail-closed) before the agent runs them. The tool-call decision rides in the
+provider response, so parsing the provider format covers every SDK — no
+per-framework adapter:
+
+```rust
+use pasu_core::Guard;
+use pasu_proxy::{router, Provider, ProxyState};
+use pasu_rules::RulesetEngine;
+use std::sync::Arc;
+
+let state = Arc::new(ProxyState {
+    guard: Guard::new(RulesetEngine::from_yaml(policy_yaml)?, "llm-proxy"),
+    client: reqwest::Client::new(),
+    upstream_base: "https://api.openai.com".into(),
+    provider: Provider::OpenAi,
+});
+let app = router(state);   // axum Router — serve it, then point the agent's base_url at it
+```
+
+OpenAI-compatible, non-streaming today; streaming (SSE) responses pass through
+unguarded for now, and Anthropic/Gemini formats are next.
+
+Deploy it as a sidecar — a slim, **unprivileged** image
+([`deploy/proxy/Dockerfile`](deploy/proxy/Dockerfile)) and an agent + proxy pod
+([`deploy/proxy/k8s-sidecar.yaml`](deploy/proxy/k8s-sidecar.yaml), the agent's
+`base_url` → `localhost`). Runnable directly too:
+
+```bash
+pasu-proxy --policy rules.yaml --listen 127.0.0.1:8788 --upstream https://api.openai.com
+```
 
 ### Deeper: in-process hooks (optional)
 
@@ -197,6 +234,7 @@ Sidecar ([`deploy/docker-compose.yml`](deploy/docker-compose.yml)) and Kubernete
 | `pasu-core` | shared types (`Event` / `Verdict`) + traits (`RuleEngine` · `Layer` · `Approver` · `AuditSink`) |
 | `pasu-rules` | `RuleEngine` — Falco-inspired YAML ruleset (allow/deny/ask, default fail-closed) |
 | `pasu-rig` | rig integration — `AgentHook` (tool gate + HITL), `HttpClientExt` (LLM egress) |
+| `pasu-proxy` | LLM-API reverse proxy — parses tool calls from provider responses (OpenAI…) and guards them via the same `Guard`; framework-agnostic (`base_url` only) |
 | `pasu-ui` | lightweight web UI — HITL approvals (`/`) + audit dashboard (`/audit`) |
 | `pasu-audit` | audit sinks — JSONL (stderr / file / SIEM), in-memory, and OpenTelemetry (OTLP spans, `otel` feature) |
 | `pasu-egress` · `pasu-ebpf` · `pasu-ebpf-common` | kernel eBPF cgroup egress — default-deny allowlist, DNS-aware (Linux) |
@@ -218,7 +256,7 @@ Key dependencies are pinned for reproducibility:
 
 ## Numbers
 
-- **10 crates**, one acyclic core (every crate depends only on `pasu-core`)
+- **11 crates**, one acyclic core (every crate depends only on `pasu-core`)
 - **Tests**: unit across the workspace + eBPF end-to-end on a real kernel (GitHub runner + Lima VM)
 - **CI**: 4 jobs green — `check` (stable) · `eBPF build+unit` (nightly + bpf-linker) · `eBPF E2E` (privileged) · `cargo-deny` (advisories/licenses/sources)
 - **Policy evaluation**: ~0.11–0.12 µs/decision (criterion) — effectively free next to a tool call
@@ -233,19 +271,22 @@ MVP — the engine, policy, HITL, audit, deployment, and benchmarks are in place
 | kernel default-deny allowlist (DNS-aware) | egress/ebpf | ✅ |
 | policy language (YAML) | rules | ✅ |
 | tool gate · HITL · LLM egress | rig | ✅ |
+| LLM-API proxy — tool-call guard (any SDK) | proxy | ✅ OpenAI · non-stream |
 | approval + audit UI | ui | ✅ |
 | audit sinks (JSONL) | audit | ✅ |
 | config-driven daemon + systemd | egress + packaging | ✅ |
 | **one policy file → both layers** | daemon | ✅ |
 
-Next: precise DNS-response sniffing (toFQDN — unlocks suffix hosts in the
-kernel), eBPF-layer audit emission, a control-plane API + richer UI, and a
-crates.io release (rig is currently git-pinned).
+Next: proxy SSE (streaming) reassembly + Anthropic/Gemini formats and eBPF
+force-routing of LLM traffic through the proxy; precise DNS-response sniffing
+(toFQDN — unlocks suffix hosts in the kernel), eBPF-layer audit emission, a
+control-plane API + richer UI, and a crates.io release (rig is currently
+git-pinned).
 
 ## Development
 
 ```bash
-cargo test              # portable crates: core, rig, rules, ui, audit (stable)
+cargo test              # portable crates: core, rig, rules, ui, audit, proxy (stable)
 cargo build -p pasu-egress   # eBPF stack — Linux only, nightly + bpf-linker
 ```
 

@@ -1,0 +1,30 @@
+[package]
+name = "pasu-proxy"
+version = "0.1.0"
+edition.workspace = true
+license.workspace = true
+
+# The library (parse / inspect / proxy) stays decoupled behind pasu-core +
+# transport (axum / reqwest). The `pasu-proxy` binary is an app-level
+# composition root: it MAY depend on a concrete rule engine (pasu-rules) to
+# wire and serve the proxy — the library never does.
+
+[[bin]]
+name = "pasu-proxy"
+path = "src/main.rs"
+
+[dependencies]
+pasu-core = { path = "../pasu-core" }
+axum = "0.7"
+reqwest = { version = "0.13", default-features = false, features = ["rustls"] }
+tokio = { workspace = true, features = ["rt-multi-thread", "macros", "net"] }
+serde = { workspace = true }
+serde_json = { workspace = true }
+
+# Binary-only (composition root): the rule engine + CLI + error context.
+pasu-rules = { path = "../pasu-rules" }
+clap = { workspace = true, features = ["derive"] }
+anyhow = { workspace = true, default-features = true }
+
+[dev-dependencies]
+tower = { version = "0.5", features = ["util"] }

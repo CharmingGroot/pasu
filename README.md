@@ -38,7 +38,7 @@ pasu는 그 환경을 위해 만들어졌습니다. 단일 Linux 호스트에서
 </p>
 
 - **① 트레이싱 / 감사** (`pasu-audit`): 모든 결정을 기록 — 파일/SIEM으로 JSONL, 또는 *당신의* 스택으로 OpenTelemetry(OTLP) 스팬. 네트워크 밖으로 나가는 것 없이 감사 증거 확보.
-- **② tool 호출 가드 — 협조적, 인프로세스** (`pasu-rig`): 선언된 tool 호출 게이팅 + 사람 승인(HITL), 정책 기반 LLM egress. 맥락은 풍부하나 단독으론 우회 가능.
+- **② tool 호출 가드 — 협조적** (`pasu-rig` 인프로세스 · `pasu-proxy` LLM-API 프록시): 선언된 tool 호출 게이팅 + 사람 승인(HITL), 정책 기반 LLM egress. rig 훅은 rig 에이전트 전용이고, **`pasu-proxy`는 provider 응답의 tool 호출을 파싱해 프레임워크 무관**(아무 SDK · `base_url`만 변경). 맥락은 풍부하나 단독으론 우회 가능.
 - **③ egress 강제 — 커널** (`pasu-egress` / `pasu-ebpf`): 커널 cgroup egress 기본 차단(default-deny). 언어 무관하며 **우회 불가** — ②를 빠져나간 것을 최종적으로 막습니다.
 
 E2E로 증명: 훅을 우회해 자체 `reqwest`로 나가는 도구도 **커널이 drop**합니다.
@@ -92,6 +92,33 @@ sudo pasu run --policy rules.yaml -- npx some-agent "task"  # 언어 무관
 ```
 
 정책이 허용하지 않은 것은 전부 커널이 drop합니다 — 에이전트(또는 인젝션된 도구)가 자체 소켓을 열어도.
+
+### 아무 SDK나 tool 호출 가드 — LLM-API 프록시
+
+에이전트의 `base_url`을 `pasu-proxy`로 향하게 하세요. 실제 provider로 포워딩하면서 모델이 돌려준 tool 호출을 파싱하고, 정책이 거부한 것은 에이전트가 실행하기 전에 차단(fail-closed)합니다. tool 호출 결정은 provider 응답에 실려 오므로, provider 포맷만 파싱하면 모든 SDK를 커버 — 프레임워크별 어댑터가 필요 없습니다:
+
+```rust
+use pasu_core::Guard;
+use pasu_proxy::{router, Provider, ProxyState};
+use pasu_rules::RulesetEngine;
+use std::sync::Arc;
+
+let state = Arc::new(ProxyState {
+    guard: Guard::new(RulesetEngine::from_yaml(policy_yaml)?, "llm-proxy"),
+    client: reqwest::Client::new(),
+    upstream_base: "https://api.openai.com".into(),
+    provider: Provider::OpenAi,
+});
+let app = router(state);   // axum Router — 서빙 후 에이전트 base_url을 여기로
+```
+
+지금은 OpenAI 호환·비스트리밍; 스트리밍(SSE)은 당분간 통과(미가드), Anthropic/Gemini 포맷은 다음입니다.
+
+사이드카로 배포 — 슬림·**무권한** 이미지([`deploy/proxy/Dockerfile`](deploy/proxy/Dockerfile))와 에이전트+프록시 파드([`deploy/proxy/k8s-sidecar.yaml`](deploy/proxy/k8s-sidecar.yaml), 에이전트 `base_url` → `localhost`). 직접 실행도:
+
+```bash
+pasu-proxy --policy rules.yaml --listen 127.0.0.1:8788 --upstream https://api.openai.com
+```
 
 ### 더 깊게: 인프로세스 훅 (선택)
 
@@ -160,6 +187,7 @@ docker build -f deploy/Dockerfile -t pasu-egress:latest .
 | `pasu-core` | 공유 타입(`Event` / `Verdict`) + trait(`RuleEngine` · `Layer` · `Approver` · `AuditSink`) + `Guard` 파사드 |
 | `pasu-rules` | `RuleEngine` — Falco 영향 YAML 룰셋(allow/deny/ask, 기본 fail-closed) |
 | `pasu-rig` | rig 통합 — `AgentHook`(tool 게이트 + HITL), `HttpClientExt`(LLM egress) |
+| `pasu-proxy` | LLM-API 리버스 프록시 — provider 응답(OpenAI…)의 tool 호출을 파싱해 같은 `Guard`로 가드; 프레임워크 무관(`base_url`만) |
 | `pasu-ui` | 경량 웹 UI — HITL 승인(`/`) + 감사·egress 대시보드(`/audit`, `/egress`) |
 | `pasu-audit` | 감사 sink — JSONL(stderr/파일/SIEM), 인메모리, OpenTelemetry(OTLP 스팬, `otel` feature) |
 | `pasu-egress` · `pasu-ebpf` · `pasu-ebpf-common` | 커널 eBPF cgroup egress — default-deny allowlist, DNS-aware (Linux) |
@@ -180,7 +208,7 @@ docker build -f deploy/Dockerfile -t pasu-egress:latest .
 
 ## 지표
 
-- **10개 crate**, acyclic 코어 하나 (모든 crate는 `pasu-core`에만 의존)
+- **11개 crate**, acyclic 코어 하나 (모든 crate는 `pasu-core`에만 의존)
 - **테스트**: 워크스페이스 전반 unit + 실제 커널 eBPF E2E (GitHub 러너 + Lima VM)
 - **CI**: 4잡 그린 — `check`(stable) · `eBPF build+unit`(nightly + bpf-linker) · `eBPF E2E`(privileged) · `cargo-deny`(advisories/licenses/sources)
 - **정책 평가**: ~0.11–0.12 µs/decision (criterion) — tool 호출 옆에선 사실상 공짜
@@ -195,17 +223,18 @@ MVP — 엔진·정책·HITL·감사·배포·벤치가 갖춰짐.
 | 커널 default-deny allowlist (DNS-aware) | egress/ebpf | ✅ |
 | 정책 언어 (YAML) | rules | ✅ |
 | tool 게이트 · HITL · LLM egress | rig | ✅ |
+| LLM-API 프록시 — tool 호출 가드 (아무 SDK) | proxy | ✅ OpenAI · non-stream |
 | 승인 + 감사 UI | ui | ✅ |
 | 감사 sink (JSONL / OTLP) | audit | ✅ |
 | config 기반 daemon + systemd | egress + packaging | ✅ |
 | **정책 파일 하나 → 양 계층** | daemon | ✅ |
 
-다음: 정밀 DNS 응답 스니핑(toFQDN — 커널서 접미 호스트 해금), eBPF 계층 감사 emit, 컨트롤 플레인 API + 리치 UI, crates.io 릴리스(rig 현재 git-pin).
+다음: 프록시 SSE(스트리밍) 재조립 + Anthropic/Gemini 포맷과 eBPF의 LLM 트래픽 강제경유; 정밀 DNS 응답 스니핑(toFQDN — 커널서 접미 호스트 해금), eBPF 계층 감사 emit, 컨트롤 플레인 API + 리치 UI, crates.io 릴리스(rig 현재 git-pin).
 
 ## 개발
 
 ```bash
-cargo test              # 포터블 크레이트: core, rig, rules, ui, audit (stable)
+cargo test              # 포터블 크레이트: core, rig, rules, ui, audit, proxy (stable)
 cargo build -p pasu-egress   # eBPF 스택 — Linux 전용, nightly + bpf-linker
 ```
 
