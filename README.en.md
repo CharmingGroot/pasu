@@ -55,12 +55,17 @@ Kubernetes and no external service**, and applies **three layers, one policy**:
   cgroup egress in the kernel. Language-agnostic and **unbypassable** — it
   catches whatever slips past layer ②.
 
-Proven end-to-end: a tool that bypasses the hook with its own `reqwest` is still
-**dropped by the kernel** (the eBPF kernel guard).
+That last layer is the point: even if a tool bypasses layer ② and opens its own
+`reqwest` connection, the kernel drops the egress — the exact case a
+declared-only cooperative guard misses.
 
 ## On-prem & regulated fit
 
 The uncommon part is the *combination*, on a single self-hosted box:
+
+<p align="center">
+  <img src="docs/onprem.svg" width="820" alt="On-prem AI agent before and after pasu: without pasu there is no guard point for the agent's tool calls and egress (cloud/SaaS guards can't run air-gapped, a firewall is all-or-nothing), so exfiltration and misuse can't be controlled per action; with pasu, one host runs pasu-proxy (layer 2 tool gate), eBPF kernel egress (layer 3 default-deny enforcement) and audit (layer 1) together, so only the allowed internal LLM passes and a bypass egress is dropped by the kernel">
+</p>
 
 - **No Kubernetes, no cloud.** One Linux host; a `.deb`-free single binary path
   via `pasu run`. K8s-native network policy engines are powerful but heavy for a
@@ -77,8 +82,9 @@ The uncommon part is the *combination*, on a single self-hosted box:
 
 ## How pasu compares
 
-Not a claim of global superiority — a fit for the **on-prem / regulated** axis,
-where the alternatives are heavier or can't run at all.
+Not a claim to be best everywhere — just a fit for **on-prem / regulated**
+setups, where the alternatives are heavier (K8s-bound) or can't run air-gapped
+at all.
 
 | | **pasu** | framework / SDK guards | K8s-native policy engines | SaaS agent guards |
 |---|:---:|:---:|:---:|:---:|
