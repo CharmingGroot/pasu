@@ -76,27 +76,17 @@ The uncommon part is the *combination*, on a single self-hosted box:
   one of the three.
 - **Apache-2.0**, auditable Rust, every crate behind traits.
 
-> Honest scope: pasu is an MVP and is **not** security-certified and has no
-> production references. It is a working, self-hostable reference for this niche —
-> not a turnkey certified appliance.
+## Limitations (honestly)
 
-## How pasu compares
+What pasu **doesn't** do — know this before adopting:
 
-Not a claim to be best everywhere — just a fit for **on-prem / regulated**
-setups, where the alternatives are heavier (K8s-bound) or can't run air-gapped
-at all.
-
-| | **pasu** | framework / SDK guards | K8s-native policy engines | SaaS agent guards |
-|---|:---:|:---:|:---:|:---:|
-| Runs on a single host, **no Kubernetes** | ✅ | ✅ | ❌ (needs K8s) | ✅ |
-| Runs **air-gapped** (no external service) | ✅ | ✅ | ✅ | ❌ |
-| Kernel-enforced egress (unbypassable) | ✅ eBPF | ❌ cooperative | ✅ | ~ |
-| Agent-intent context (tool calls, HITL) | ✅ | ✅ | ❌ | ✅ |
-| Audit trail (JSONL / OTLP to your stack) | ✅ | partial | ~ | ✅ (their cloud) |
-| Language / framework-agnostic | ✅ | ❌ | ✅ | ~ |
-
-The uncommon combination for a single self-hosted host: **kernel-inline egress +
-agent intent + audit** — with no Kubernetes and nothing leaving the network.
+- **Kernel enforcement is Linux-only.** On macOS/Windows only the cooperative layer (the LLM-API proxy) runs; there is no egress enforcement.
+- **eBPF needs privileges** (root / CAP_BPF). The proxy layer runs unprivileged, but the enforcing layer needs kernel capabilities.
+- **The proxy layer is bypassable on its own** — which is why the kernel layer exists. If a tool opens its own socket, the proxy can't see it and the kernel makes the final call.
+- **Egress decisions are L3/L4 (IP / domain).** No TLS-payload or L7 content inspection (DLP) — so exfiltration to an *allowed* domain (EchoLeak-style) is **not** stopped by the allowlist.
+- **Tool calls in streaming (SSE) responses aren't inspected yet** (they pass through). Non-streaming only; DNS-awareness is best-effort (precise toFQDN is planned).
+- **It does not stop prompt injection or model misbehavior itself.** pasu governs egress and tool intent, not the model's behavior — it's a last line of defense, not an input filter.
+- **Still an MVP.** No security certification, no production references — a working, self-hostable reference for this niche, not a turnkey certified appliance.
 
 ## Policy (Falco-inspired YAML)
 
