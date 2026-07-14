@@ -1,8 +1,9 @@
 //! Parse LLM API responses for the tool calls a model proposed.
 //!
 //! The tool-call *decision* (name + arguments) rides in the provider response
-//! body, so extracting it here catches intent without any SDK hook. OpenAI
-//! (+ compatible) is implemented; Anthropic / Gemini extend [`Provider`].
+//! body, so extracting it here catches intent without any SDK hook. The three
+//! provider wire formats cover effectively every SDK: OpenAI Chat Completions
+//! (+ compatible), Anthropic Messages, and Gemini `generateContent`.
 
 use serde::Deserialize;
 
@@ -10,7 +11,8 @@ use serde::Deserialize;
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ToolCall {
     pub name: String,
-    /// Raw arguments as the provider emitted them (OpenAI: a JSON string).
+    /// Arguments as a JSON string. OpenAI emits a string already; Anthropic and
+    /// Gemini emit a JSON object, which we serialize so the guard sees one shape.
     pub arguments: String,
 }
 
@@ -19,7 +21,10 @@ pub struct ToolCall {
 pub enum Provider {
     /// OpenAI Chat Completions and OpenAI-compatible servers (vLLM, etc.).
     OpenAi,
-    // Anthropic, Gemini: follow-up.
+    /// Anthropic Messages API.
+    Anthropic,
+    /// Google Gemini `generateContent`.
+    Gemini,
 }
 
 /// Extract the tool calls from a response body.
@@ -32,6 +37,8 @@ pub enum Provider {
 pub fn extract(body: &[u8], provider: Provider) -> Option<Vec<ToolCall>> {
     match provider {
         Provider::OpenAi => extract_openai(body),
+        Provider::Anthropic => extract_anthropic(body),
+        Provider::Gemini => extract_gemini(body),
     }
 }
 
@@ -76,6 +83,87 @@ fn extract_openai(body: &[u8]) -> Option<Vec<ToolCall>> {
         .map(|tc| ToolCall {
             name: tc.function.name,
             arguments: tc.function.arguments,
+        })
+        .collect();
+    Some(calls)
+}
+
+// Anthropic: content[] blocks where type == "tool_use" carry {name, input}.
+#[derive(Deserialize)]
+struct AnthropicResponse {
+    #[serde(default)]
+    content: Vec<AnthropicBlock>,
+}
+
+#[derive(Deserialize)]
+struct AnthropicBlock {
+    #[serde(rename = "type")]
+    kind: String,
+    name: Option<String>,
+    #[serde(default)]
+    input: serde_json::Value,
+}
+
+fn extract_anthropic(body: &[u8]) -> Option<Vec<ToolCall>> {
+    let resp: AnthropicResponse = serde_json::from_slice(body).ok()?;
+    let calls = resp
+        .content
+        .into_iter()
+        .filter(|b| b.kind == "tool_use")
+        .filter_map(|b| {
+            b.name.map(|name| ToolCall {
+                name,
+                arguments: b.input.to_string(),
+            })
+        })
+        .collect();
+    Some(calls)
+}
+
+// Gemini: candidates[].content.parts[].functionCall.{name, args}
+#[derive(Deserialize)]
+struct GeminiResponse {
+    #[serde(default)]
+    candidates: Vec<GeminiCandidate>,
+}
+
+#[derive(Deserialize)]
+struct GeminiCandidate {
+    #[serde(default)]
+    content: Option<GeminiContent>,
+}
+
+#[derive(Deserialize)]
+struct GeminiContent {
+    #[serde(default)]
+    parts: Vec<GeminiPart>,
+}
+
+#[derive(Deserialize)]
+struct GeminiPart {
+    #[serde(rename = "functionCall")]
+    #[serde(default)]
+    function_call: Option<GeminiFunctionCall>,
+}
+
+#[derive(Deserialize)]
+struct GeminiFunctionCall {
+    name: String,
+    #[serde(default)]
+    args: serde_json::Value,
+}
+
+fn extract_gemini(body: &[u8]) -> Option<Vec<ToolCall>> {
+    let resp: GeminiResponse = serde_json::from_slice(body).ok()?;
+    let calls = resp
+        .candidates
+        .into_iter()
+        .filter_map(|c| c.content)
+        .flat_map(|c| c.parts)
+        .filter_map(|p| p.function_call)
+        .map(|fc| ToolCall {
+            name: fc.name,
+            arguments: fc.args.to_string(),
         })
         .collect();
     Some(calls)
@@ -127,5 +215,55 @@ mod tests {
     fn non_json_body_is_passthrough_none() {
         assert!(extract(b"event: message\ndata: {}\n\n", Provider::OpenAi).is_none());
         assert!(extract(b"not json at all", Provider::OpenAi).is_none());
+    }
+
+    // Anthropic Messages: a tool_use block alongside a text block.
+    const ANTHROPIC_WITH_CALL: &[u8] = br#"{
+        "role": "assistant",
+        "content": [
+            { "type": "text", "text": "let me help" },
+            { "type": "tool_use", "id": "tu_1", "name": "delete_file",
+              "input": { "path": "/etc/passwd" } }
+        ]
+    }"#;
+
+    #[test]
+    fn extracts_anthropic_tool_use_name_and_input() {
+        let calls = extract(ANTHROPIC_WITH_CALL, Provider::Anthropic).expect("parses");
+        assert_eq!(calls.len(), 1);
+        assert_eq!(calls[0].name, "delete_file");
+        assert_eq!(calls[0].arguments, r#"{"path":"/etc/passwd"}"#);
+    }
+
+    #[test]
+    fn anthropic_text_only_has_no_tool_calls() {
+        let body = br#"{"role":"assistant","content":[{"type":"text","text":"hi"}]}"#;
+        let calls = extract(body, Provider::Anthropic).expect("parses");
+        assert!(calls.is_empty());
+    }
+
+    // Gemini generateContent: a functionCall part.
+    const GEMINI_WITH_CALL: &[u8] = br#"{
+        "candidates": [
+            { "content": { "role": "model", "parts": [
+                { "functionCall": { "name": "delete_file",
+                                    "args": { "path": "/etc/passwd" } } }
+            ] } }
+        ]
+    }"#;
+
+    #[test]
+    fn extracts_gemini_function_call_name_and_args() {
+        let calls = extract(GEMINI_WITH_CALL, Provider::Gemini).expect("parses");
+        assert_eq!(calls.len(), 1);
+        assert_eq!(calls[0].name, "delete_file");
+        assert_eq!(calls[0].arguments, r#"{"path":"/etc/passwd"}"#);
+    }
+
+    #[test]
+    fn gemini_text_only_has_no_tool_calls() {
+        let body = br#"{"candidates":[{"content":{"parts":[{"text":"hi"}]}}]}"#;
+        let calls = extract(body, Provider::Gemini).expect("parses");
+        assert!(calls.is_empty());
     }
 }
