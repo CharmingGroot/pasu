@@ -144,8 +144,9 @@ let state = Arc::new(ProxyState {
 let app = router(state);   // axum Router — serve it, then point the agent's base_url at it
 ```
 
-OpenAI-compatible, non-streaming today; streaming (SSE) responses pass through
-unguarded for now, and Anthropic/Gemini formats are next.
+OpenAI-compatible, Anthropic, and Gemini non-streaming responses today (the
+three formats cover effectively every SDK); streaming (SSE) responses pass
+through unguarded for now — reassembly is next.
 
 Deploy it as a sidecar — a slim, **unprivileged** image
 ([`deploy/proxy/Dockerfile`](deploy/proxy/Dockerfile)) and an agent + proxy pod
@@ -255,7 +256,7 @@ MVP — the engine, policy, HITL, audit, deployment, and benchmarks are in place
 |---|---|:---:|
 | kernel default-deny allowlist (DNS-aware) | egress/ebpf | ✅ |
 | policy language (YAML) | rules | ✅ |
-| LLM-API proxy — tool-call guard · HITL (any SDK) | proxy | ✅ OpenAI · non-stream |
+| LLM-API proxy — tool-call guard · HITL (any SDK) | proxy | ✅ OpenAI · Anthropic · Gemini · non-stream |
 | approval + audit UI | ui | ✅ |
 | audit sinks (JSONL) | audit | ✅ |
 | config-driven daemon + systemd | egress + packaging | ✅ |

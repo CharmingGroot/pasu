@@ -8,6 +8,11 @@ its first tagged release.
 ## [Unreleased]
 
 ### Added
+- **Anthropic & Gemini response parsing in `pasu-proxy`** — the tool-call guard
+  now understands all three provider wire formats (OpenAI Chat Completions,
+  Anthropic Messages, Gemini `generateContent`), covering effectively every SDK.
+  Select with `--provider {openai,anthropic,gemini}`. Non-streaming responses;
+  SSE reassembly is still pending.
 - **One policy file for both layers** — `pasu-daemon --policy rules.yaml` lowers
   the same ruleset the proxy evaluates into the kernel egress allowlist
   (IPv4 → static, exact host → DNS-resolved, `.suffix` → reported as
