@@ -26,6 +26,8 @@ const DENIED_IP: &str = "1.1.1.1";
 const DOMAIN: &str = "one.one.one.one";
 /// An IP NOT covered by DOMAIN — must stay dropped even when DOMAIN is allowlisted.
 const OFF_DOMAIN_IP: &str = "8.8.8.8";
+/// Unix socket for the control-plane admin API in the live-edit test.
+const ADMIN_SOCK: &str = "/tmp/pasu-e2e-admin.sock";
 
 fn e2e_enabled() -> bool {
     std::env::var_os("PASU_E2E_KERNEL").is_some()
@@ -65,11 +67,13 @@ impl Drop for Guard {
         let _ = self.0.kill();
         let _ = self.0.wait();
         let _ = std::fs::remove_dir(CGROUP);
+        let _ = std::fs::remove_file(ADMIN_SOCK);
     }
 }
 
 /// Create the dedicated cgroup and spawn the guard attached to it with `allow`.
-fn attach_guard(allow: &[&str], domains: &[&str]) -> Guard {
+/// `admin` (when set) serves the control-plane admin socket at that path.
+fn attach_guard(allow: &[&str], domains: &[&str], admin: Option<&str>) -> Guard {
     std::fs::create_dir_all(CGROUP).expect("create dedicated test cgroup");
     let mut cmd = Command::new(GUARD_BIN);
     cmd.args(["--cgroup-path", CGROUP]);
@@ -79,10 +83,28 @@ fn attach_guard(allow: &[&str], domains: &[&str]) -> Guard {
     for d in domains {
         cmd.args(["--allow-domain", d]);
     }
+    if let Some(sock) = admin {
+        cmd.args(["--admin-socket", sock]);
+    }
     cmd.env("RUST_LOG", "info");
     let guard = Guard(cmd.spawn().expect("spawn guard binary"));
     std::thread::sleep(Duration::from_secs(3)); // attach + map injection + DNS resolve settle
     guard
+}
+
+/// Send one line to the guard's admin socket and return its reply.
+fn admin_cmd(socket: &str, line: &str) -> String {
+    use std::io::{Read, Write};
+    let mut stream = std::os::unix::net::UnixStream::connect(socket).expect("connect admin socket");
+    stream
+        .set_read_timeout(Some(Duration::from_secs(3)))
+        .expect("set read timeout");
+    stream
+        .write_all(format!("{line}\n").as_bytes())
+        .expect("write admin command");
+    let mut buf = [0u8; 512];
+    let n = stream.read(&mut buf).unwrap_or(0);
+    String::from_utf8_lossy(&buf[..n]).to_string()
 }
 
 fn should_skip() -> bool {
@@ -107,7 +129,7 @@ fn allowlist_permits_listed_denies_others() {
         return;
     }
 
-    let _guard = attach_guard(&[ALLOWED_IP], &[]);
+    let _guard = attach_guard(&[ALLOWED_IP], &[], None);
 
     // True negative: the allowlisted IP still connects (no over-blocking).
     assert!(
@@ -131,7 +153,7 @@ fn empty_allowlist_denies_all_egress() {
         return;
     }
 
-    let _guard = attach_guard(&[], &[]); // nothing allowed
+    let _guard = attach_guard(&[], &[], None); // nothing allowed
 
     // default-deny: with an empty allowlist, even ALLOWED_IP is dropped.
     assert!(
@@ -151,7 +173,7 @@ fn allowlist_by_domain_permits_resolved_denies_others() {
     }
 
     // Allow by DOMAIN — the loader resolves it (→ 1.1.1.1 / 1.0.0.1) into the ALLOW map.
-    let _guard = attach_guard(&[], &[DOMAIN]);
+    let _guard = attach_guard(&[], &[DOMAIN], None);
 
     // A resolved IP of the domain is permitted.
     assert!(
@@ -162,5 +184,42 @@ fn allowlist_by_domain_permits_resolved_denies_others() {
     assert!(
         !child_connects_in_cgroup(OFF_DOMAIN_IP),
         "{OFF_DOMAIN_IP} (not part of {DOMAIN}) must be dropped"
+    );
+}
+
+#[test]
+fn admin_socket_allow_then_deny_toggles_egress_live() {
+    if should_skip() {
+        return;
+    }
+    if !baseline_connects(ALLOWED_IP) {
+        eprintln!("SKIP: no baseline connectivity (offline?).");
+        return;
+    }
+
+    // Empty allowlist + admin socket. Default-deny: ALLOWED_IP is dropped before
+    // any command touches the running guard.
+    let _guard = attach_guard(&[], &[], Some(ADMIN_SOCK));
+    assert!(
+        !child_connects_in_cgroup(ALLOWED_IP),
+        "empty allowlist must drop {ALLOWED_IP} before any admin command"
+    );
+
+    // Live-allow it over the admin socket — no restart, kernel map edited in place.
+    let reply = admin_cmd(ADMIN_SOCK, &format!("allow {ALLOWED_IP}"));
+    assert!(reply.contains("\"ok\":true"), "allow reply: {reply}");
+    std::thread::sleep(Duration::from_secs(1));
+    assert!(
+        child_connects_in_cgroup(ALLOWED_IP),
+        "after live `allow {ALLOWED_IP}` the running guard must permit it"
+    );
+
+    // Live-deny it again — egress must stop without a restart.
+    let reply = admin_cmd(ADMIN_SOCK, &format!("deny {ALLOWED_IP}"));
+    assert!(reply.contains("\"ok\":true"), "deny reply: {reply}");
+    std::thread::sleep(Duration::from_secs(1));
+    assert!(
+        !child_connects_in_cgroup(ALLOWED_IP),
+        "after live `deny {ALLOWED_IP}` the running guard must drop it again"
     );
 }
