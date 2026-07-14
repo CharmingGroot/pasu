@@ -9,9 +9,9 @@ its first tagged release.
 
 ### Added
 - **One policy file for both layers** — `pasu-daemon --policy rules.yaml` lowers
-  the same ruleset the rig hook evaluates into the kernel egress allowlist
+  the same ruleset the proxy evaluates into the kernel egress allowlist
   (IPv4 → static, exact host → DNS-resolved, `.suffix` → reported as
-  hook-layer-only, `default: allow` → refused fail-closed).
+  cooperative-layer-only, `default: allow` → refused fail-closed).
 - **Control-plane admin socket** — `pasu-egress --admin-socket` exposes
   `status` / `allow <ip>` / `deny <ip>` for live inspection and edits.
 - **Egress dashboard UI** (`/egress`) — kernel filter coverage, live allowlist

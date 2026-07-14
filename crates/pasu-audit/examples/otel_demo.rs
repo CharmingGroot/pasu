@@ -25,7 +25,7 @@ async fn main() {
 
     let decisions = [
         (
-            "rig-tool",
+            "proxy-tool",
             EventKind::ToolCall {
                 name: "transfer_funds".into(),
                 input: "{}".into(),

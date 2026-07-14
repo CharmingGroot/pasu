@@ -1,6 +1,6 @@
 //! pasu-daemon — one policy file, both layers.
 //!
-//! Reads the same rules YAML the rig hook evaluates, lowers its `allow` rules
+//! Reads the same rules YAML the proxy evaluates, lowers its `allow` rules
 //! to the kernel egress allowlist (`Ruleset::egress_allowlist`), and runs the
 //! eBPF guard. Rules the kernel cannot express (suffix hosts) are reported and
 //! stay enforced at the hook layer — the kernel remains default-deny, so the
@@ -13,7 +13,7 @@ use pasu_rules::Ruleset;
 
 #[derive(Debug, Parser)]
 struct Opt {
-    /// The pasu policy YAML — the SAME file your agent's rig hook loads.
+    /// The pasu policy YAML — the SAME file the proxy loads.
     #[clap(short, long)]
     policy: std::path::PathBuf,
     /// cgroup v2 path to attach to. Must be a DEDICATED cgroup: default-deny on

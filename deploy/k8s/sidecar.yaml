@@ -16,7 +16,7 @@ spec:
   containers:
     - name: agent
       image: your-registry/your-agent:latest
-      # ... your agent (rig + pasu-rig for the cooperative layer) ...
+      # ... your agent; point its base_url at pasu-proxy for the cooperative layer ...
 
     - name: pasu-egress
       image: your-registry/pasu-egress:latest

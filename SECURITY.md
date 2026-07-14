@@ -13,7 +13,7 @@ are high-impact, so please treat them accordingly.
 
 Include what you can:
 
-- affected component (`rig` / `egress` / `ebpf` / `rules` / `ui` / `daemon`),
+- affected component (`proxy` / `egress` / `ebpf` / `rules` / `ui` / `daemon`),
 - reproduction steps or a proof of concept,
 - impact (what a guard bypass would allow).
 

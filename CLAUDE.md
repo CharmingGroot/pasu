@@ -5,29 +5,30 @@ These rules take precedence over default behavior.
 
 ## Project
 
-Pasu is a Rust security guard for AI agents. Its core is a kernel **eBPF egress guard** (language-agnostic, enforcing), extended by a **rig integration** (a secure-by-default agent SDK). The differentiator is **enforcing** (the kernel actually blocks egress, unbypassable) rather than cooperative (only sees what is declared).
+Pasu is a Rust security guard for AI agents. Its core is a kernel **eBPF egress guard** (language-agnostic, enforcing), extended by an **LLM-API proxy** that guards tool calls by parsing provider responses (framework-agnostic — any SDK, `base_url` only). The differentiator is **enforcing** (the kernel actually blocks egress, unbypassable) rather than cooperative (only sees what is declared).
 
 **Concept (decided 2026-07-10): pasu is a GUARD APPLIANCE, not an agent.**
 - pasu never performs agent work; it wraps/controls agents. Do not add agent
   capabilities (LLM calling, task execution) to pasu itself.
-- Adoption UX is **`pasu run -- <any agent command>`**: wrap any framework
-  (rig, LangChain, CrewAI, CLI agents) with zero code changes — the kernel
-  layer is framework/language-agnostic by construction.
-- In-process SDK hooks (`pasu-rig`, future adapters) are the *optional deeper*
-  integration, not the entry point. New framework support = a thin adapter that
-  maps that SDK's hook to pasu's core traits (never the other way around).
+- Adoption UX is **`pasu run -- <any agent command>`** (kernel egress) or
+  pointing the agent's `base_url` at **`pasu-proxy`** (tool-call guard): wrap any
+  framework (LangChain, CrewAI, CLI agents) with zero code changes — both layers
+  are framework/language-agnostic by construction.
+- Framework-specific in-process SDK hooks are intentionally NOT the path. Tool
+  intent is captured at the provider-API boundary (`pasu-proxy`, ~3 provider
+  formats cover every SDK), never via a per-SDK adapter.
 - Positioning line: *"Don't trust your agent. Jail it."*
 
 Two layers:
 
 | Layer | Where | Role | crate |
 |-------|-------|------|-------|
-| rig integration | in-process (cooperative) | tool-call gate + HITL (`AgentHook`), LLM egress (`HttpClientExt`) | `pasu-rig` |
+| LLM-API proxy | provider-API boundary (cooperative) | tool-call gate + HITL by parsing provider responses; framework-agnostic | `pasu-proxy` |
 | eBPF egress | kernel (enforcing) | `connect()` / cgroup egress block — unbypassable | `pasu-egress` + `pasu-ebpf` |
 
-The cooperative layer filters first; egress that bypasses it (e.g. a tool's own network code) is stopped at the kernel.
+The proxy filters tool-call intent first; egress that bypasses it (e.g. a tool's own network code) is stopped at the kernel.
 
-Detailed design lives in `docs/` (positioning · architecture · repo-structure · rig-integration · rules · testing; in progress).
+Detailed design lives in `docs/` (positioning · architecture · repo-structure · rules · testing; in progress).
 **Read the relevant design doc before starting work.**
 
 ---
@@ -36,7 +37,7 @@ Detailed design lives in `docs/` (positioning · architecture · repo-structure 
 
 ### 1. Architecture — keep separation/abstraction
 
-- **Keep crates separate**: the rig integration (`pasu-rig`), egress layers (`pasu-egress` / `pasu-ebpf`), and the rule engine (`pasu-rules`) are independent crates. **No direct dependency between them.** They depend only on `pasu-core` (acyclic dependency graph). The `rig` dependency is isolated to `pasu-rig` so `pasu-core` stays pure (other framework adapters can be added beside it).
+- **Keep crates separate**: the LLM-API proxy (`pasu-proxy`), egress layers (`pasu-egress` / `pasu-ebpf`), and the rule engine (`pasu-rules`) are independent crates. **No direct dependency between them.** They depend only on `pasu-core` (acyclic dependency graph). App-level binaries (`pasu-proxy`, `pasu-daemon`) may wire a concrete engine (`pasu-rules`); the library crates stay pure behind `pasu-core`.
 - **Implementations behind traits**: `RuleEngine` / `Layer` / `Transport`. Concrete implementations (Falco, eBPF, socket) stay behind traits so they are **replaceable**. Callers see only the trait.
 - **Toggle ≠ split**: keep both runtime toggle (config `<layer>.enabled`) and build-time separation (crate/feature).
 - If a feature would break a crate boundary or trait abstraction — **stop and propose a redesign.** Do not couple things ad hoc.
@@ -60,7 +61,7 @@ Detailed design lives in `docs/` (positioning · architecture · repo-structure 
 
 ### 5. Commits / PRs
 
-- **Conventional Commits** (`type(scope): description`). Scope aligns with area (`rig` / `egress` / `ebpf` / `rules` / `core` / `ci` / `docs`).
+- **Conventional Commits** (`type(scope): description`). Scope aligns with area (`proxy` / `egress` / `ebpf` / `rules` / `core` / `ci` / `docs`).
 - **DCO sign-off required**: `git commit -s`.
 - **No AI attribution**: do not add `Co-Authored-By: Claude` or similar. Contributions under your own name.
 - **Isolated scope**: one PR = one problem.
@@ -98,7 +99,7 @@ merge A first. Do **not** `--delete-branch` a branch another PR is based on.
 
 ### 7. Platform
 
-- **Linux first.** eBPF is Linux-only — macOS/Windows run only the rig integration (cooperative; no kernel egress enforcement), and that must be stated.
+- **Linux first.** eBPF is Linux-only — macOS/Windows run only the LLM-API proxy (cooperative; no kernel egress enforcement), and that must be stated.
 - eBPF changes need care around kernel privileges (CAP_BPF) and kernel version dependencies.
 
 ---
