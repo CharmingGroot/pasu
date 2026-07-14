@@ -46,12 +46,30 @@ async fn mock_completions(headers: HeaderMap) -> impl IntoResponse {
     }))
 }
 
+// Streaming mock: the same tool call, split across SSE chunks the way OpenAI
+// streams it (name first, arguments as fragments).
+async fn mock_completions_sse(headers: HeaderMap) -> impl IntoResponse {
+    let tool = headers
+        .get("x-test-tool")
+        .and_then(|v| v.to_str().ok())
+        .unwrap_or("web_search")
+        .to_string();
+    let body = format!(
+        "data: {{\"choices\":[{{\"index\":0,\"delta\":{{\"tool_calls\":[{{\"index\":0,\"id\":\"c1\",\"function\":{{\"name\":\"{tool}\",\"arguments\":\"\"}}}}]}}}}]}}\n\n\
+         data: {{\"choices\":[{{\"index\":0,\"delta\":{{\"tool_calls\":[{{\"index\":0,\"function\":{{\"arguments\":\"{{}}\"}}}}]}}}}]}}\n\n\
+         data: [DONE]\n\n"
+    );
+    ([("content-type", "text/event-stream")], body)
+}
+
 async fn spawn_mock_upstream() -> String {
     let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
         .await
         .expect("bind mock");
     let addr = listener.local_addr().expect("addr");
-    let app = Router::new().route("/v1/chat/completions", post(mock_completions));
+    let app = Router::new()
+        .route("/v1/chat/completions", post(mock_completions))
+        .route("/v1/sse/chat/completions", post(mock_completions_sse));
     tokio::spawn(async move {
         let _ = axum::serve(listener, app).await;
     });
@@ -108,4 +126,41 @@ async fn unknown_tool_fails_closed_over_the_wire() {
         .await
         .expect("proxy responds");
     assert_eq!(resp.status(), StatusCode::FORBIDDEN);
+}
+
+fn sse_request_for(tool: &str) -> Request<Body> {
+    Request::builder()
+        .method("POST")
+        .uri("/v1/sse/chat/completions")
+        .header("x-test-tool", tool)
+        .body(Body::empty())
+        .expect("request")
+}
+
+#[tokio::test]
+async fn denied_tool_call_in_sse_stream_is_blocked() {
+    let app = proxy_app(spawn_mock_upstream().await);
+    let resp = app
+        .oneshot(sse_request_for("delete_file"))
+        .await
+        .expect("proxy responds");
+    assert_eq!(resp.status(), StatusCode::FORBIDDEN);
+}
+
+#[tokio::test]
+async fn allowed_tool_call_in_sse_stream_passes_with_body_intact() {
+    let app = proxy_app(spawn_mock_upstream().await);
+    let resp = app
+        .oneshot(sse_request_for("web_search"))
+        .await
+        .expect("proxy responds");
+    assert_eq!(resp.status(), StatusCode::OK);
+    let body = axum::body::to_bytes(resp.into_body(), 64 * 1024)
+        .await
+        .expect("body");
+    let text = String::from_utf8(body.to_vec()).expect("utf8");
+    // The original SSE bytes pass through untouched.
+    assert!(text.contains("data:"), "SSE framing preserved: {text}");
+    assert!(text.contains("web_search"));
+    assert!(text.contains("[DONE]"));
 }

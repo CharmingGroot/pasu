@@ -82,7 +82,7 @@ Tool-call guard, kernel egress, and audit on a single self-hosted box:
 - **Requires kernel privileges** — the eBPF layer needs root or CAP_BPF (the proxy layer runs unprivileged).
 - **Proxy layer is bypassable on its own** — a tool that opens its own socket is invisible to the proxy; the kernel layer covers that case.
 - **L3/L4 egress control** — IP/domain level, with no TLS-payload or L7 content (DLP) inspection. Exfiltration to an already-allowed domain is not stopped by the allowlist.
-- **No streaming (SSE) support** — only non-streaming responses have their tool calls inspected. DNS-awareness is best-effort.
+- **Streaming is buffered** — SSE tool calls are reassembled and inspected, but the full stream is buffered and relayed at once (no incremental relay). DNS-awareness is best-effort.
 - **Not an input-layer defense** — prompt injection and model misbehavior are out of scope. pasu is a last line of defense over egress and tool intent.
 - **Early stage (MVP)** — no security certification, no production references.
 
@@ -138,9 +138,10 @@ let state = Arc::new(ProxyState {
 let app = router(state);   // axum Router — serve it, then point the agent's base_url at it
 ```
 
-OpenAI-compatible, Anthropic, and Gemini non-streaming responses today (the
-three formats cover effectively every SDK); streaming (SSE) responses pass
-through unguarded for now — reassembly is next.
+Supports OpenAI-compatible, Anthropic, and Gemini (the three formats cover
+effectively every SDK), for both non-streaming and streaming (SSE) responses —
+SSE deltas are reassembled and judged by the same policy, with the full stream
+buffered before relay.
 
 Run the binary with `--ui <addr>` to attach human-in-the-loop approval — a web
 queue (`/`) for pending `Ask` verdicts plus an audit view (`/audit`). Without
@@ -256,13 +257,13 @@ MVP — the engine, policy, HITL, audit, deployment, and benchmarks are in place
 |---|---|:---:|
 | kernel default-deny allowlist (DNS-aware) | egress/ebpf | ✅ |
 | policy language (YAML) | rules | ✅ |
-| LLM-API proxy — tool-call guard · HITL (any SDK) | proxy | ✅ OpenAI · Anthropic · Gemini · non-stream |
+| LLM-API proxy — tool-call guard · HITL (any SDK) | proxy | ✅ OpenAI · Anthropic · Gemini · SSE reassembly |
 | approval + audit UI | ui | ✅ |
 | audit sinks (JSONL) | audit | ✅ |
 | config-driven daemon + systemd | egress + packaging | ✅ |
 | **one policy file → both layers** | daemon | ✅ |
 
-Next: proxy SSE (streaming) reassembly + Anthropic/Gemini formats and eBPF
+Next: incremental SSE relay (currently buffered) and eBPF
 force-routing of LLM traffic through the proxy; precise DNS-response sniffing
 (toFQDN — unlocks suffix hosts in the kernel), eBPF-layer audit emission, a
 control-plane API + richer UI, and a crates.io release (aya is currently
