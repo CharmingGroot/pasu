@@ -10,7 +10,7 @@
 <rect x="0" y="0" width="940" height="520" rx="18" fill="#f7f8fc" stroke="#e6e8f0" stroke-width="1.5"/>
 
 <text x="28" y="40" font-size="19" font-weight="800" fill="#1f2430">pasu — two layers, one policy</text>
-<text x="28" y="62" font-size="12.5" fill="#5b6478">An in-process hook sees only what the agent <tspan font-style="italic">declares</tspan>; the kernel sees everything.</text>
+<text x="28" y="62" font-size="12.5" fill="#5b6478">An in-process hook sees only what the agent <tspan font-style="italic">declares</tspan>; the kernel sees everything.  (egress view — tool-call intent → pasu-proxy / rig tool-gate)</text>
 
 <rect x="330" y="78" width="330" height="40" rx="10" fill="#ffffff" stroke="#c9d0e6"/>
 <rect x="330" y="78" width="6" height="40" rx="3" fill="#403aa8"/>
