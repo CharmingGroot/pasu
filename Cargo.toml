@@ -11,6 +11,7 @@ members = [
     "crates/pasu-egress",
     "crates/pasu-daemon",
     "crates/pasu-cli",
+    "crates/pasu-proxy",
 ]
 # The eBPF stack needs nightly + bpf-linker + a Linux/bpf target, so it is kept
 # out of default-members: `cargo build/test` and CI (stable) only touch the
@@ -21,6 +22,7 @@ default-members = [
     "crates/pasu-rules",
     "crates/pasu-ui",
     "crates/pasu-audit",
+    "crates/pasu-proxy",
 ]
 
 [workspace.package]

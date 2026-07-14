@@ -1696,6 +1696,20 @@ dependencies = [
 ]
 
 [[package]]
+name = "pasu-proxy"
+version = "0.1.0"
+dependencies = [
+ "axum",
+ "pasu-core",
+ "pasu-rules",
+ "reqwest",
+ "serde",
+ "serde_json",
+ "tokio",
+ "tower 0.5.3",
+]
+
+[[package]]
 name = "pasu-rig"
 version = "0.0.0"
 dependencies = [
