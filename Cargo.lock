@@ -1395,6 +1395,7 @@ dependencies = [
  "anyhow",
  "axum",
  "clap",
+ "criterion",
  "pasu-core",
  "pasu-rules",
  "pasu-ui",
