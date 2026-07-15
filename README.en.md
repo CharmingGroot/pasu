@@ -241,11 +241,14 @@ Key dependencies are pinned for reproducibility:
 
 ## Numbers
 
+<p align="center">
+  <img src="docs/metrics.svg" width="880" alt="pasu measured overhead and verification map: criterion benchmarks (Apple M4) — policy decision 0.06µs, response parse 0.7µs, SSE reassembly 4.5µs, 5–7 orders of magnitude below a typical ~1s LLM roundtrip on a log scale. Claims-to-evidence matrix: kernel default-deny drop, live allow/deny and domain allowlist proven by real-kernel E2E in CI; denied tool call 403 and SSE guarding by unit + wire E2E; ask fail-closed by unit tests. 75 tests total, 4 CI jobs">
+</p>
+
+- **Guard cost per response** (measured, criterion, Apple M4): policy decision ~0.06 µs · response parse ~0.7 µs · SSE reassembly (40 chunks) ~4.5 µs. Reproduce: `cargo bench -p pasu-rules -p pasu-proxy`
+- **75 tests**: 62 portable (core · rules · ui · audit · proxy, incl. wire E2E) + 13 eBPF (9 unit · **4 real-kernel E2E**)
+- **4 CI jobs on every push** — `fmt·clippy·test` (stable) · `eBPF build+unit` (nightly + bpf-linker) · `eBPF E2E` (privileged, real Ubuntu kernel) · `cargo-deny` (advisories/licenses/sources)
 - **10 crates**, one acyclic core (every crate depends only on `pasu-core`)
-- **Tests**: unit across the workspace + eBPF end-to-end on a real kernel (GitHub runner + Lima VM)
-- **CI**: 4 jobs green — `check` (stable) · `eBPF build+unit` (nightly + bpf-linker) · `eBPF E2E` (privileged) · `cargo-deny` (advisories/licenses/sources)
-- **Policy evaluation**: ~0.11–0.12 µs/decision (criterion) — effectively free next to a tool call
-- **default-deny allowlist**, **DNS-aware**, **HITL**, **JSONL / OTLP audit**, **no Kubernetes**, **runs air-gapped**
 
 ## Status
 

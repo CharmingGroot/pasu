@@ -1,0 +1,98 @@
+<svg viewBox="0 0 940 640" xmlns="http://www.w3.org/2000/svg" role="img" font-family="ui-sans-serif, system-ui, -apple-system, Segoe UI, Roboto, sans-serif">
+<title>pasu — measured overhead and verification map</title>
+<desc>pasu 지표 근거. 위: criterion 실측(Apple M4) 응답당 가드 비용 — 정책 판정 0.06µs, 응답 파싱 0.7µs, SSE 재조립(40청크) 4.5µs를 로그 스케일에서 통상 LLM 왕복(~1초)과 비교하면 5~7자리수 작음. 아래: 주장↔검증 매트릭스 — 커널 default-deny drop·런타임 allow/deny·도메인 allowlist는 CI의 실제 커널 E2E로, 거부 tool call 403·SSE 재조립 가드는 유닛+와이어 E2E로, ask fail-closed는 유닛으로 검증. 총 75개 테스트(포터블 62 + eBPF 13), CI 4잡.</desc>
+
+<rect x="0" y="0" width="940" height="640" rx="18" fill="#f7f8fc" stroke="#e6e8f0" stroke-width="1.5"/>
+<text x="28" y="38" font-size="19" font-weight="800" fill="#1f2430">pasu — measured overhead &amp; verification map</text>
+<text x="28" y="60" font-size="12" fill="#5b6478">Every number below is measured (criterion) or enforced by a CI job — sources in the repo.</text>
+
+<!-- ============ Panel A: guard cost per response (log scale) ============ -->
+<rect x="24" y="80" width="892" height="240" rx="14" fill="#ffffff" stroke="#e6e8f0"/>
+<text x="44" y="108" font-size="14" font-weight="700" fill="#3a3f52">Guard cost per response — measured</text>
+<text x="44" y="126" font-size="11" fill="#6b7488">criterion micro-benchmarks · Apple M4 · log scale (each gridline = ×10)</text>
+
+<!-- log axis: 10ns .. 10s, 45px per decade, x0=150 -->
+<g stroke="#eef1f9" stroke-width="1">
+  <line x1="150" y1="140" x2="150" y2="284"/><line x1="195" y1="140" x2="195" y2="284"/>
+  <line x1="240" y1="140" x2="240" y2="284"/><line x1="285" y1="140" x2="285" y2="284"/>
+  <line x1="330" y1="140" x2="330" y2="284"/><line x1="375" y1="140" x2="375" y2="284"/>
+  <line x1="420" y1="140" x2="420" y2="284"/><line x1="465" y1="140" x2="465" y2="284"/>
+  <line x1="510" y1="140" x2="510" y2="284"/><line x1="555" y1="140" x2="555" y2="284"/>
+</g>
+<g font-size="9" fill="#8a92a6" text-anchor="middle">
+  <text x="150" y="298">10ns</text><text x="240" y="298">1µs</text>
+  <text x="330" y="298">100µs</text><text x="420" y="298">10ms</text>
+  <text x="510" y="298">1s</text>
+</g>
+
+<!-- bars: x = 150 + (log10(ns)-1)*45 -->
+<!-- policy decision 60ns -> 185 -->
+<text x="140" y="158" font-size="11" text-anchor="end" fill="#1f2430">policy decision</text>
+<rect x="150" y="148" width="35" height="14" rx="4" fill="#0d9488"/>
+<text x="192" y="159" font-size="10.5" font-weight="700" fill="#0f766e">0.06 µs</text>
+
+<text x="140" y="192" font-size="11" text-anchor="end" fill="#1f2430">parse response</text>
+<!-- 730ns -> 233 -->
+<rect x="150" y="182" width="83" height="14" rx="4" fill="#0d9488"/>
+<text x="240" y="193" font-size="10.5" font-weight="700" fill="#0f766e">0.7 µs</text>
+
+<text x="140" y="226" font-size="11" text-anchor="end" fill="#1f2430">SSE reassembly</text>
+<!-- 4500ns -> 265 -->
+<rect x="150" y="216" width="115" height="14" rx="4" fill="#0d9488"/>
+<text x="272" y="227" font-size="10.5" font-weight="700" fill="#0f766e">4.5 µs <tspan fill="#6b7488" font-weight="400">(40-chunk stream)</tspan></text>
+
+<text x="140" y="260" font-size="11" text-anchor="end" fill="#6b7488">LLM roundtrip</text>
+<!-- ~1s -> 510 -->
+<rect x="150" y="250" width="360" height="14" rx="4" fill="#c9d0e6"/>
+<text x="510" y="245" font-size="10.5" text-anchor="end" fill="#6b7488">~1 s (typical order — for scale, not ours)</text>
+
+<text x="580" y="158" font-size="11" fill="#5b6478">The guard's CPU work per LLM response is</text>
+<text x="580" y="176" font-size="11" fill="#5b6478">policy + parse ≈ <tspan font-weight="700" fill="#0f766e">&lt;1 µs</tspan> (non-streaming) or</text>
+<text x="580" y="194" font-size="11" fill="#5b6478">≈ <tspan font-weight="700" fill="#0f766e">5 µs</tspan> (streamed) — 5–7 orders of magnitude</text>
+<text x="580" y="212" font-size="11" fill="#5b6478">below the LLM roundtrip it rides on.</text>
+<text x="580" y="240" font-size="10" fill="#8a92a6">bench sources: pasu-rules/benches/policy.rs</text>
+<text x="580" y="255" font-size="10" fill="#8a92a6">· pasu-proxy/benches/parse.rs</text>
+<text x="580" y="270" font-size="10" fill="#8a92a6">run: cargo bench -p pasu-rules -p pasu-proxy</text>
+
+<!-- ============ Panel B: claims <-> evidence matrix ============ -->
+<rect x="24" y="336" width="892" height="284" rx="14" fill="#ffffff" stroke="#e6e8f0"/>
+<text x="44" y="364" font-size="14" font-weight="700" fill="#3a3f52">Claims ↔ evidence</text>
+<text x="44" y="382" font-size="11" fill="#6b7488">every README claim maps to a test tier — all run in CI on every push</text>
+
+<!-- column headers -->
+<g font-size="10.5" font-weight="700" fill="#3a3f52" text-anchor="middle">
+  <text x="600" y="408">unit</text>
+  <text x="700" y="408">wire E2E</text>
+  <text x="820" y="401">kernel E2E</text>
+  <text x="820" y="414" font-size="9" font-weight="400" fill="#6b7488">(CI · real kernel)</text>
+</g>
+<line x1="44" y1="420" x2="896" y2="420" stroke="#e6e8f0"/>
+
+<!-- rows -->
+<g font-size="11.5" fill="#1f2430">
+  <text x="44" y="442">default-deny: non-allowlisted egress dropped in the kernel</text>
+  <text x="44" y="470">live allow / deny over the admin socket — no restart</text>
+  <text x="44" y="498">domain allowlist (resolved &amp; re-resolved)</text>
+  <text x="44" y="526">denied tool call → 403 before the agent sees it</text>
+  <text x="44" y="554">SSE tool calls reassembled &amp; guarded (3 providers)</text>
+  <text x="44" y="582">`ask` without approval fails closed</text>
+</g>
+<g fill="#0d9488">
+  <!-- row 1: kernel -->
+  <circle cx="820" cy="438" r="5"/>
+  <!-- row 2: unit + kernel -->
+  <circle cx="600" cy="466" r="5"/><circle cx="820" cy="466" r="5"/>
+  <!-- row 3: kernel -->
+  <circle cx="820" cy="494" r="5"/>
+  <!-- row 4: unit + wire -->
+  <circle cx="600" cy="522" r="5"/><circle cx="700" cy="522" r="5"/>
+  <!-- row 5: unit + wire -->
+  <circle cx="600" cy="550" r="5"/><circle cx="700" cy="550" r="5"/>
+  <!-- row 6: unit -->
+  <circle cx="600" cy="578" r="5"/>
+</g>
+<g stroke="#f0f2f8"><line x1="44" y1="452" x2="896" y2="452"/><line x1="44" y1="480" x2="896" y2="480"/>
+<line x1="44" y1="508" x2="896" y2="508"/><line x1="44" y1="536" x2="896" y2="536"/><line x1="44" y1="564" x2="896" y2="564"/></g>
+
+<text x="44" y="608" font-size="10.5" fill="#5b6478"><tspan font-weight="700" fill="#1f2430">75 tests</tspan> — 62 portable (core · rules · ui · audit · proxy) + 13 eBPF (9 unit · 4 kernel E2E) · <tspan font-weight="700" fill="#1f2430">CI: 4 jobs</tspan> incl. privileged eBPF E2E on a real Ubuntu kernel</text>
+</svg>

@@ -196,11 +196,14 @@ docker build -f deploy/Dockerfile -t pasu-egress:latest .
 
 ## 지표
 
+<p align="center">
+  <img src="docs/metrics.svg" width="880" alt="pasu 실측 오버헤드와 검증 지도: criterion 실측(Apple M4)으로 정책 판정 0.06µs·응답 파싱 0.7µs·SSE 재조립 4.5µs — 로그 스케일에서 통상 LLM 왕복(~1초)보다 5~7자리수 작음. 주장↔검증 매트릭스: 커널 default-deny drop·런타임 allow/deny·도메인 allowlist는 CI의 실제 커널 E2E로, 거부 tool call 403·SSE 가드는 유닛+와이어 E2E로, ask fail-closed는 유닛으로 검증. 총 75개 테스트, CI 4잡">
+</p>
+
+- **응답당 가드 비용** (criterion 실측, Apple M4): 정책 판정 ~0.06 µs · 응답 파싱 ~0.7 µs · SSE 재조립(40청크) ~4.5 µs. 재현: `cargo bench -p pasu-rules -p pasu-proxy`
+- **테스트 75개**: 포터블 62(core·rules·ui·audit·proxy, 와이어 E2E 포함) + eBPF 13(유닛 9 · **실제 커널 E2E 4**)
+- **CI 4개 잡**이 push마다 실행 — `fmt·clippy·test`(stable) · `eBPF build+unit`(nightly + bpf-linker) · `eBPF E2E`(privileged, 실제 Ubuntu 커널) · `cargo-deny`(취약점/라이선스/소스)
 - **crate 10개**, 순환 없는 코어 하나 (모든 crate가 `pasu-core`에만 의존)
-- **테스트**: 워크스페이스 전반의 유닛 테스트 + 실제 커널에서의 eBPF E2E (GitHub 러너 + Lima VM)
-- **CI**: 4개 잡 통과 — `check`(stable) · `eBPF build+unit`(nightly + bpf-linker) · `eBPF E2E`(privileged) · `cargo-deny`(취약점/라이선스/소스)
-- **정책 평가**: ~0.11–0.12 µs/판정 (criterion) — 도구 호출 비용에 비하면 무시할 수준
-- 기본 차단 allowlist, DNS 인식, HITL, JSONL / OTLP 감사, 쿠버네티스 불필요, 망분리 동작
 
 ## 상태
 

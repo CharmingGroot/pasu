@@ -8,6 +8,11 @@ its first tagged release.
 ## [Unreleased]
 
 ### Added
+- **Proxy parse benchmarks + evidence-backed metrics** — criterion
+  micro-benchmarks for the per-response guard cost (`extract` per provider +
+  SSE reassembly) alongside the existing policy bench; the README metrics
+  section now embeds `docs/metrics.svg` (measured overhead on a log scale +
+  a claims↔evidence matrix mapping every README claim to its test tier).
 - **HITL approval UI wired into `pasu-proxy`** — run the proxy with `--ui <addr>`
   to serve the pasu-ui approval queue (`/`) and audit view (`/audit`); a
   `Verdict::Ask` now awaits a browser approve/deny instead of failing closed.
