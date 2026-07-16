@@ -1,8 +1,8 @@
-<svg viewBox="0 0 940 640" xmlns="http://www.w3.org/2000/svg" role="img" font-family="ui-sans-serif, system-ui, -apple-system, Segoe UI, Roboto, sans-serif">
+<svg viewBox="0 0 940 668" xmlns="http://www.w3.org/2000/svg" role="img" font-family="ui-sans-serif, system-ui, -apple-system, Segoe UI, Roboto, sans-serif">
 <title>pasu — measured overhead and verification map</title>
-<desc>pasu 지표 근거. 위: criterion 실측(Apple M4) 응답당 가드 비용 — 정책 판정 0.06µs, 응답 파싱 0.7µs, SSE 재조립(40청크) 4.5µs를 로그 스케일에서 통상 LLM 왕복(~1초)과 비교하면 5~7자리수 작음. 아래: 주장↔검증 매트릭스 — 커널 default-deny drop·런타임 allow/deny·도메인 allowlist는 CI의 실제 커널 E2E로, 거부 tool call 403·SSE 재조립 가드는 유닛+와이어 E2E로, ask fail-closed는 유닛으로 검증. 총 75개 테스트(포터블 62 + eBPF 13), CI 4잡.</desc>
+<desc>pasu 지표 근거. 위: criterion 실측(Apple M4) 응답당 가드 비용 — 정책 판정 0.06µs, 응답 파싱 0.7µs, SSE 재조립(40청크) 4.5µs를 로그 스케일에서 통상 LLM 왕복(~1초)과 비교하면 5~7자리수 작음. 아래: 주장↔검증 매트릭스 — 커널 default-deny drop·런타임 allow/deny·도메인 allowlist·pasu run 래핑은 CI의 실제 커널 E2E로, 거부 tool call 403·SSE 재조립 가드는 유닛+와이어 E2E로, ask fail-closed는 유닛으로 검증. 총 82개 테스트(포터블 62 + Linux 20), CI 4잡.</desc>
 
-<rect x="0" y="0" width="940" height="640" rx="18" fill="#f7f8fc" stroke="#e6e8f0" stroke-width="1.5"/>
+<rect x="0" y="0" width="940" height="668" rx="18" fill="#f7f8fc" stroke="#e6e8f0" stroke-width="1.5"/>
 <text x="28" y="38" font-size="19" font-weight="800" fill="#1f2430">pasu — measured overhead &amp; verification map</text>
 <text x="28" y="60" font-size="12" fill="#5b6478">Every number below is measured (criterion) or enforced by a CI job — sources in the repo.</text>
 
@@ -55,7 +55,7 @@
 <text x="580" y="270" font-size="10" fill="#8a92a6">run: cargo bench -p pasu-rules -p pasu-proxy</text>
 
 <!-- ============ Panel B: claims <-> evidence matrix ============ -->
-<rect x="24" y="336" width="892" height="284" rx="14" fill="#ffffff" stroke="#e6e8f0"/>
+<rect x="24" y="336" width="892" height="312" rx="14" fill="#ffffff" stroke="#e6e8f0"/>
 <text x="44" y="364" font-size="14" font-weight="700" fill="#3a3f52">Claims ↔ evidence</text>
 <text x="44" y="382" font-size="11" fill="#6b7488">every README claim maps to a test tier — all run in CI on every push</text>
 
@@ -76,6 +76,7 @@
   <text x="44" y="526">denied tool call → 403 before the agent sees it</text>
   <text x="44" y="554">SSE tool calls reassembled &amp; guarded (3 providers)</text>
   <text x="44" y="582">`ask` without approval fails closed</text>
+  <text x="44" y="610">`pasu run` wraps a command in a guarded cgroup · rejects fail-open policy</text>
 </g>
 <g fill="#0d9488">
   <!-- row 1: kernel -->
@@ -90,9 +91,12 @@
   <circle cx="600" cy="550" r="5"/><circle cx="700" cy="550" r="5"/>
   <!-- row 6: unit -->
   <circle cx="600" cy="578" r="5"/>
+  <!-- row 7: unit + kernel -->
+  <circle cx="600" cy="606" r="5"/><circle cx="820" cy="606" r="5"/>
 </g>
 <g stroke="#f0f2f8"><line x1="44" y1="452" x2="896" y2="452"/><line x1="44" y1="480" x2="896" y2="480"/>
-<line x1="44" y1="508" x2="896" y2="508"/><line x1="44" y1="536" x2="896" y2="536"/><line x1="44" y1="564" x2="896" y2="564"/></g>
+<line x1="44" y1="508" x2="896" y2="508"/><line x1="44" y1="536" x2="896" y2="536"/><line x1="44" y1="564" x2="896" y2="564"/>
+<line x1="44" y1="592" x2="896" y2="592"/></g>
 
-<text x="44" y="608" font-size="10.5" fill="#5b6478"><tspan font-weight="700" fill="#1f2430">75 tests</tspan> — 62 portable (core · rules · ui · audit · proxy) + 13 eBPF (9 unit · 4 kernel E2E) · <tspan font-weight="700" fill="#1f2430">CI: 4 jobs</tspan> incl. privileged eBPF E2E on a real Ubuntu kernel</text>
+<text x="44" y="636" font-size="10.5" fill="#5b6478"><tspan font-weight="700" fill="#1f2430">82 tests</tspan> — 62 portable (core · rules · ui · audit · proxy) + 20 Linux (14 unit · 6 kernel E2E) · <tspan font-weight="700" fill="#1f2430">CI: 4 jobs</tspan> incl. privileged E2E on a real Ubuntu kernel</text>
 </svg>
