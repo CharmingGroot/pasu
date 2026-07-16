@@ -65,15 +65,20 @@ jobs:
       - name: install bpf-linker
         run: cargo install bpf-linker --locked
       - uses: Swatinem/rust-cache@v2
-      - name: build E2E binary
-        run: cargo test -p pasu-egress --test egress_e2e --no-run
+      - name: build E2E binaries
+        run: |
+          cargo test -p pasu-egress --test egress_e2e --no-run
+          cargo test -p pasu-cli --test run_e2e --no-run
       # cgroup egress E2E needs root (CAP_BPF + cgroup attach). PASU_E2E_KERNEL
-      # opts the test in; without it (and without root) the test self-skips.
-      - name: run E2E (privileged cgroup egress)
+      # opts the tests in; without it (and without root) they self-skip.
+      - name: run E2E (privileged cgroup egress + pasu run)
         run: |
           sudo env "PATH=$PATH" "RUSTUP_HOME=$HOME/.rustup" "CARGO_HOME=$HOME/.cargo" \
             PASU_E2E_KERNEL=1 \
             cargo test -p pasu-egress --test egress_e2e -- --test-threads=1 --nocapture
+          sudo env "PATH=$PATH" "RUSTUP_HOME=$HOME/.rustup" "CARGO_HOME=$HOME/.cargo" \
+            PASU_E2E_KERNEL=1 \
+            cargo test -p pasu-cli --test run_e2e -- --test-threads=1 --nocapture
 
   supply-chain:
     name: cargo-deny (advisories · licenses · sources)
