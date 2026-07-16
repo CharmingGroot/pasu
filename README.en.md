@@ -154,7 +154,17 @@ Deploy it as a sidecar — a slim, **unprivileged** image
   <img src="docs/sidecar.svg" width="820" alt="pasu-proxy as a sidecar: one pod holds the agent and the unprivileged pasu-proxy; only the agent's base_url changes (localhost). The proxy forwards to the provider, inspects tool calls in responses (deny 403, ask HITL) and writes stderr JSONL audit. On the node, the privileged pasu-egress kernel guard is optional defense-in-depth — a direct socket that bypasses the proxy is dropped in the kernel">
 </p>
 
-Runnable directly too:
+The simplest attach: one proxy container, and **one env var** on the agent side:
+
+```bash
+docker build -f deploy/proxy/Dockerfile -t pasu-proxy .
+docker run -d -p 8788:8788 -v "$PWD/rules.yaml:/etc/pasu/rules.yaml:ro" pasu-proxy
+export OPENAI_BASE_URL=http://127.0.0.1:8788/v1   # that's it (OpenAI-SDK family)
+```
+
+The default CMD forwards to `api.openai.com` with the mounted policy; for an
+internal vLLM etc., append args (`--upstream http://vllm:8000 --provider openai`).
+Runnable without a container too:
 
 ```bash
 pasu-proxy --policy rules.yaml --listen 127.0.0.1:8788 --upstream https://api.openai.com
@@ -248,11 +258,11 @@ Key dependencies are pinned for reproducibility:
 ## Numbers
 
 <p align="center">
-  <img src="docs/metrics.svg" width="880" alt="pasu measured overhead and verification map: criterion benchmarks (Apple M4) — policy decision 0.06µs, response parse 0.7µs, SSE reassembly 4.5µs, 5–7 orders of magnitude below a typical ~1s LLM roundtrip on a log scale. Claims-to-evidence matrix: kernel default-deny drop, live allow/deny and domain allowlist proven by real-kernel E2E in CI; denied tool call 403 and SSE guarding by unit + wire E2E; ask fail-closed by unit tests. 75 tests total, 4 CI jobs">
+  <img src="docs/metrics.svg" width="880" alt="pasu measured overhead and verification map: criterion benchmarks (Apple M4) — policy decision 0.06µs, response parse 0.7µs, SSE reassembly 4.5µs, 5–7 orders of magnitude below a typical ~1s LLM roundtrip on a log scale. Claims-to-evidence matrix: kernel default-deny drop, live allow/deny and domain allowlist proven by real-kernel E2E in CI; denied tool call 403 and SSE guarding by unit + wire E2E; ask fail-closed by unit tests; pasu run wrapping by real-kernel E2E. 82 tests total, 4 CI jobs">
 </p>
 
 - **Guard cost per response** (measured, criterion, Apple M4): policy decision ~0.06 µs · response parse ~0.7 µs · SSE reassembly (40 chunks) ~4.5 µs. Reproduce: `cargo bench -p pasu-rules -p pasu-proxy`
-- **75 tests**: 62 portable (core · rules · ui · audit · proxy, incl. wire E2E) + 13 eBPF (9 unit · **4 real-kernel E2E**)
+- **82 tests**: 62 portable (core · rules · ui · audit · proxy, incl. wire E2E) + 20 Linux (14 unit · **6 real-kernel E2E** — egress 4 + `pasu run` 2)
 - **4 CI jobs on every push** — `fmt·clippy·test` (stable) · `eBPF build+unit` (nightly + bpf-linker) · `eBPF E2E` (privileged, real Ubuntu kernel) · `cargo-deny` (advisories/licenses/sources)
 - **10 crates**, one acyclic core (every crate depends only on `pasu-core`)
 
