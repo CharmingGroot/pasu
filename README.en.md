@@ -148,7 +148,13 @@ it, `Ask` fails closed.
 Deploy it as a sidecar — a slim, **unprivileged** image
 ([`deploy/proxy/Dockerfile`](deploy/proxy/Dockerfile)) and an agent + proxy pod
 ([`deploy/proxy/k8s-sidecar.yaml`](deploy/proxy/k8s-sidecar.yaml), the agent's
-`base_url` → `localhost`). Runnable directly too:
+`base_url` → `localhost`).
+
+<p align="center">
+  <img src="docs/sidecar.svg" width="820" alt="pasu-proxy as a sidecar: one pod holds the agent and the unprivileged pasu-proxy; only the agent's base_url changes (localhost). The proxy forwards to the provider, inspects tool calls in responses (deny 403, ask HITL) and writes stderr JSONL audit. On the node, the privileged pasu-egress kernel guard is optional defense-in-depth — a direct socket that bypasses the proxy is dropped in the kernel">
+</p>
+
+Runnable directly too:
 
 ```bash
 pasu-proxy --policy rules.yaml --listen 127.0.0.1:8788 --upstream https://api.openai.com
