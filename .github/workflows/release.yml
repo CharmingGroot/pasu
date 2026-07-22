@@ -1,6 +1,7 @@
 name: release
 
-# Build and publish a multi-arch pasu-egress image to GHCR on version tags.
+# Build and publish the multi-arch pasu images to GHCR on version tags:
+# pasu-egress (kernel eBPF guard) and pasu-proxy (unprivileged LLM-API guard).
 on:
   push:
     tags: ["v*"]
@@ -11,8 +12,16 @@ permissions:
 
 jobs:
   image:
-    name: ghcr image (amd64 + arm64)
+    name: ghcr ${{ matrix.image }} (amd64 + arm64)
     runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - image: pasu-egress
+            dockerfile: deploy/Dockerfile
+          - image: pasu-proxy
+            dockerfile: deploy/proxy/Dockerfile
     steps:
       - uses: actions/checkout@v4
       - uses: docker/setup-qemu-action@v3
@@ -25,7 +34,7 @@ jobs:
       - uses: docker/metadata-action@v5
         id: meta
         with:
-          images: ghcr.io/${{ github.repository_owner }}/pasu-egress
+          images: ghcr.io/${{ github.repository_owner }}/${{ matrix.image }}
           tags: |
             type=semver,pattern={{version}}
             type=semver,pattern={{major}}.{{minor}}
@@ -33,7 +42,7 @@ jobs:
       - uses: docker/build-push-action@v6
         with:
           context: .
-          file: deploy/Dockerfile
+          file: ${{ matrix.dockerfile }}
           platforms: linux/amd64,linux/arm64
           push: true
           tags: ${{ steps.meta.outputs.tags }}
