@@ -4,6 +4,10 @@ Thanks for helping build pasu. It's a security tool, so a few rules keep it
 trustworthy. (Maintainer/AI working rules live in [CLAUDE.md](CLAUDE.md); this is
 the short version for contributors.)
 
+Working with a coding agent? Point it at [AGENTS.md](AGENTS.md) — it has the
+orientation, build/test commands, and step-by-step recipes for common changes
+(under [`.github/skills/`](.github/skills/)).
+
 ## Ground rules
 
 - **Conventional Commits**: `type(scope): description`. Scope aligns with area —
