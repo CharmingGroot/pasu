@@ -28,6 +28,10 @@ const DOMAIN: &str = "one.one.one.one";
 const OFF_DOMAIN_IP: &str = "8.8.8.8";
 /// Unix socket for the control-plane admin API in the live-edit test.
 const ADMIN_SOCK: &str = "/tmp/pasu-e2e-admin.sock";
+/// Allowlisted IPv6 destination (Cloudflare one.one.one.one) — must connect.
+const ALLOWED_V6: &str = "2606:4700:4700::1111";
+/// Non-allowlisted IPv6 destination (Cloudflare) — must be dropped.
+const DENIED_V6: &str = "2606:4700:4700::1001";
 
 fn e2e_enabled() -> bool {
     std::env::var_os("PASU_E2E_KERNEL").is_some()
@@ -184,6 +188,41 @@ fn allowlist_by_domain_permits_resolved_denies_others() {
     assert!(
         !child_connects_in_cgroup(OFF_DOMAIN_IP),
         "{OFF_DOMAIN_IP} (not part of {DOMAIN}) must be dropped"
+    );
+}
+
+/// IPv6 probe over a literal address (bash /dev/tcp doesn't take v6 literals).
+fn v6_baseline(ip6: &str) -> bool {
+    tcp_check(&format!(
+        "command -v curl >/dev/null && curl -6 -sS --max-time 4 -o /dev/null http://[{ip6}]/"
+    ))
+}
+fn v6_child_connects_in_cgroup(ip6: &str) -> bool {
+    tcp_check(&format!(
+        "echo $$ > {CGROUP}/cgroup.procs && curl -6 -sS --max-time 6 -o /dev/null http://[{ip6}]/"
+    ))
+}
+
+#[test]
+fn ipv6_allowlist_permits_listed_denies_others() {
+    if should_skip() {
+        return;
+    }
+    // GitHub-hosted runners have no IPv6 egress; self-skip there. Exercises the
+    // v6 kernel path on a v6-capable host. (The v4 tests already prove the
+    // updated eBPF program — with the ALLOW6 map + v6 branch — loads/verifies.)
+    if !v6_baseline(ALLOWED_V6) || !v6_baseline(DENIED_V6) {
+        eprintln!("SKIP: no IPv6 baseline connectivity (runner has no v6?).");
+        return;
+    }
+    let _guard = attach_guard(&[ALLOWED_V6], &[], None);
+    assert!(
+        v6_child_connects_in_cgroup(ALLOWED_V6),
+        "allowlisted v6 {ALLOWED_V6} must remain reachable"
+    );
+    assert!(
+        !v6_child_connects_in_cgroup(DENIED_V6),
+        "non-allowlisted v6 {DENIED_V6} must be DROPPED under default-deny"
     );
 }
 

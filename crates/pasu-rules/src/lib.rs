@@ -10,7 +10,7 @@
 //! the trait's callers (pasu-proxy, pasu-egress) decoupled from the rule format —
 //! swap this for OPA / a DSL later without touching them. Design: docs/rules.md
 
-use std::net::Ipv4Addr;
+use std::net::{Ipv4Addr, Ipv6Addr};
 
 use pasu_core::{Event, EventKind, RuleEngine, Verdict};
 use serde::Deserialize;
@@ -68,7 +68,9 @@ pub struct Ruleset {
 pub struct EgressAllowlist {
     /// Host entries that parse as IPv4 — injected as static allow entries.
     pub ips: Vec<Ipv4Addr>,
-    /// Exact hostnames — resolved (and periodically re-resolved) to IPv4s.
+    /// Host entries that parse as IPv6 — injected as static allow entries.
+    pub ips6: Vec<Ipv6Addr>,
+    /// Exact hostnames — resolved (and periodically re-resolved) to IPs.
     pub domains: Vec<String>,
     /// Allow rules the kernel layer cannot express, with the reason. These stay
     /// enforced at the hook layer only — surface them to the operator.
@@ -134,6 +136,8 @@ impl Ruleset {
                 });
             } else if let Ok(ip) = host.parse::<Ipv4Addr>() {
                 out.ips.push(ip);
+            } else if let Ok(ip6) = host.parse::<Ipv6Addr>() {
+                out.ips6.push(ip6);
             } else {
                 out.domains.push(host.to_string());
             }
@@ -321,6 +325,21 @@ default: deny
         assert_eq!(out.domains, vec!["api.openai.com".to_string()]);
         assert_eq!(out.skipped.len(), 1);
         assert_eq!(out.skipped[0].rule, "allow-suffix");
+    }
+
+    #[test]
+    fn lowers_ipv6_literal_to_ips6() {
+        let rs = Ruleset::from_yaml(
+            "rules:\n  - name: allow-v6\n    match: { host: \"2606:4700:4700::1111\" }\n    action: allow\n  - name: allow-v4\n    match: { host: \"1.1.1.1\" }\n    action: allow\ndefault: deny\n",
+        )
+        .unwrap();
+        let out = rs.egress_allowlist().unwrap();
+        assert_eq!(out.ips, vec![Ipv4Addr::new(1, 1, 1, 1)]);
+        assert_eq!(
+            out.ips6,
+            vec!["2606:4700:4700::1111".parse::<Ipv6Addr>().unwrap()]
+        );
+        assert!(out.domains.is_empty());
     }
 
     #[test]
