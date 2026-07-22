@@ -8,11 +8,14 @@ its first tagged release.
 ## [Unreleased]
 
 ### Added
-- **Podman deployment notes** — `docs/deployment.md` documents running the eBPF
-  egress guard under Podman (cgroup-v2-native, daemonless): rootful/privileged
-  `podman run` with `--cgroupns host`, the pod-sidecar mapping (incl. `podman play
-  kube`), and why rootless Podman only fits the cooperative proxy layer. Marked as
-  untested-against-a-live-host, like the Kubernetes examples.
+- **Podman deployment notes (verified)** — `docs/deployment.md` documents running
+  the eBPF egress guard under Podman (cgroup-v2-native, daemonless), **verified on
+  Lima** (Ubuntu 24.04, kernel 6.8, Podman 4.9.3): rootful/privileged self-guard
+  (default cgroupns) and sidecar (`--cgroupns host` + the target's dedicated cgroup
+  path) both enforce the allowlist in the kernel with host egress intact. Documents
+  the anti-pattern proven along the way — `--cgroupns host` on a `/sys/fs/cgroup`
+  attach cuts the *host's* egress — and why rootless Podman only fits the
+  cooperative proxy layer.
 - **`AGENTS.md` + `.github/skills/`** — a vendor-neutral orientation guide for
   coding agents and new contributors (build/test, crate map, working rules,
   deferring to CLAUDE.md as the binding authority), plus step-by-step task
@@ -64,5 +67,11 @@ its first tagged release.
 - README: dependency-pin table, container/Helm quickstart.
 
 ### Fixed
+- **Container builds now work on Podman** (surfaced verifying the Podman notes):
+  the `deploy/Dockerfile` and `deploy/proxy/Dockerfile` base images and the
+  compose `curl` image are now fully-qualified (`docker.io/library/...`), so they
+  resolve under Podman's stricter short-name policy (Docker is unaffected); and a
+  `.dockerignore` excludes `target/` etc. so the build context is no longer the
+  whole 6.6 GB tree.
 - `pasu-ebpf` was missing a `license` field; `pasu-egress` was missing the
   `io-util`/`sync` tokio features (surfaced by a clean build).

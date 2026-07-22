@@ -13,7 +13,7 @@
 # name and adjust the attach path accordingly.
 services:
   agent:
-    image: curlimages/curl:latest
+    image: docker.io/curlimages/curl:latest
     # a stand-in agent: keeps trying an allowed and a blocked destination
     command:
       - sh
