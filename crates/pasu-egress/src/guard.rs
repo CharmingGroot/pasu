@@ -6,7 +6,7 @@
 //! `pasu-daemon`) can run the same guard from different policy sources.
 
 use std::future::Future;
-use std::net::{IpAddr, Ipv4Addr};
+use std::net::{IpAddr, Ipv4Addr, Ipv6Addr};
 use std::path::PathBuf;
 use std::time::Duration;
 
@@ -29,6 +29,8 @@ pub struct GuardConfig {
     pub cgroup_path: PathBuf,
     /// Static IPv4 allow entries.
     pub allow: Vec<Ipv4Addr>,
+    /// Destination IPv6 addresses allowed to egress (static allow entries).
+    pub allow6: Vec<Ipv6Addr>,
     /// Domains whose resolved IPv4s are allowed (re-resolved periodically).
     pub allow_domain: Vec<String>,
     /// Domain re-resolution interval, seconds.
@@ -37,15 +39,11 @@ pub struct GuardConfig {
     pub admin_socket: Option<PathBuf>,
 }
 
-/// Resolve a domain to its IPv4 addresses (best-effort; empty vec on failure).
-async fn resolve_v4(domain: &str) -> Vec<Ipv4Addr> {
+/// Resolve a domain to its IP addresses (best-effort; empty on failure). Both
+/// families — v4 goes to the ALLOW map, v6 to ALLOW6.
+async fn resolve(domain: &str) -> Vec<IpAddr> {
     match tokio::net::lookup_host(format!("{domain}:443")).await {
-        Ok(addrs) => addrs
-            .filter_map(|sa| match sa.ip() {
-                IpAddr::V4(v4) => Some(v4),
-                IpAddr::V6(_) => None,
-            })
-            .collect(),
+        Ok(addrs) => addrs.map(|sa| sa.ip()).collect(),
         Err(e) => {
             warn!("resolve {domain} failed: {e}");
             Vec::new()
@@ -53,49 +51,75 @@ async fn resolve_v4(domain: &str) -> Vec<Ipv4Addr> {
     }
 }
 
-/// Resolve every domain and inject the resulting IPv4s into the ALLOW map.
+/// Resolve every domain and inject the resulting IPs into the ALLOW/ALLOW6 maps.
 async fn refresh_domains(ebpf: &mut aya::Ebpf, domains: &[String]) -> anyhow::Result<()> {
     let mut ips = Vec::new();
     for d in domains {
-        ips.extend(resolve_v4(d).await);
+        ips.extend(resolve(d).await);
     }
-    let mut allow: AyaHashMap<_, u32, u8> =
-        AyaHashMap::try_from(ebpf.map_mut("ALLOW").context("ALLOW map not found")?)?;
     for ip in ips {
-        allow.insert(u32::from(ip), 1u8, 0)?;
+        allow_insert(ebpf, ip)?;
     }
     Ok(())
 }
 
-fn allow_insert(ebpf: &mut aya::Ebpf, ip: Ipv4Addr) -> anyhow::Result<()> {
-    let mut allow: AyaHashMap<_, u32, u8> =
-        AyaHashMap::try_from(ebpf.map_mut("ALLOW").context("ALLOW map not found")?)?;
-    allow.insert(u32::from(ip), 1u8, 0)?;
+fn allow_insert(ebpf: &mut aya::Ebpf, ip: IpAddr) -> anyhow::Result<()> {
+    match ip {
+        IpAddr::V4(v4) => {
+            let mut allow: AyaHashMap<_, u32, u8> =
+                AyaHashMap::try_from(ebpf.map_mut("ALLOW").context("ALLOW map not found")?)?;
+            allow.insert(u32::from(v4), 1u8, 0)?;
+        }
+        IpAddr::V6(v6) => {
+            let mut allow: AyaHashMap<_, u128, u8> =
+                AyaHashMap::try_from(ebpf.map_mut("ALLOW6").context("ALLOW6 map not found")?)?;
+            allow.insert(u128::from(v6), 1u8, 0)?;
+        }
+    }
     Ok(())
 }
 
-fn allow_remove(ebpf: &mut aya::Ebpf, ip: Ipv4Addr) -> anyhow::Result<()> {
-    let mut allow: AyaHashMap<_, u32, u8> =
-        AyaHashMap::try_from(ebpf.map_mut("ALLOW").context("ALLOW map not found")?)?;
-    allow.remove(&u32::from(ip))?;
+fn allow_remove(ebpf: &mut aya::Ebpf, ip: IpAddr) -> anyhow::Result<()> {
+    match ip {
+        IpAddr::V4(v4) => {
+            let mut allow: AyaHashMap<_, u32, u8> =
+                AyaHashMap::try_from(ebpf.map_mut("ALLOW").context("ALLOW map not found")?)?;
+            allow.remove(&u32::from(v4))?;
+        }
+        IpAddr::V6(v6) => {
+            let mut allow: AyaHashMap<_, u128, u8> =
+                AyaHashMap::try_from(ebpf.map_mut("ALLOW6").context("ALLOW6 map not found")?)?;
+            allow.remove(&u128::from(v6))?;
+        }
+    }
     Ok(())
 }
 
-/// Read the current ALLOW map keys as sorted IPv4 strings.
+/// Read the current ALLOW + ALLOW6 map keys as sorted IP strings.
 fn allow_list(ebpf: &aya::Ebpf) -> Vec<String> {
-    let Some(map) = ebpf.map("ALLOW") else {
-        return Vec::new();
-    };
-    let Ok(allow): Result<AyaHashMap<_, u32, u8>, _> = AyaHashMap::try_from(map) else {
-        return Vec::new();
-    };
-    let mut ips: Vec<Ipv4Addr> = allow
-        .keys()
-        .filter_map(Result::ok)
-        .map(Ipv4Addr::from)
-        .collect();
-    ips.sort();
-    ips.into_iter().map(|ip| ip.to_string()).collect()
+    let mut out: Vec<IpAddr> = Vec::new();
+    if let Some(map) = ebpf.map("ALLOW") {
+        if let Ok(allow) = <AyaHashMap<_, u32, u8>>::try_from(map) {
+            out.extend(
+                allow
+                    .keys()
+                    .filter_map(Result::ok)
+                    .map(|k| IpAddr::from(Ipv4Addr::from(k))),
+            );
+        }
+    }
+    if let Some(map) = ebpf.map("ALLOW6") {
+        if let Ok(allow) = <AyaHashMap<_, u128, u8>>::try_from(map) {
+            out.extend(
+                allow
+                    .keys()
+                    .filter_map(Result::ok)
+                    .map(|k| IpAddr::from(Ipv6Addr::from(k))),
+            );
+        }
+    }
+    out.sort();
+    out.into_iter().map(|ip| ip.to_string()).collect()
 }
 
 /// Accept connections on the admin socket and forward parsed requests to the
@@ -210,10 +234,14 @@ impl Guard {
             }
         }
 
-        // Control plane → eBPF: inject static IPs into the ALLOW map.
+        // Control plane → eBPF: inject static IPs into the ALLOW / ALLOW6 maps.
         for ip in &cfg.allow {
-            allow_insert(&mut ebpf, *ip)?;
+            allow_insert(&mut ebpf, IpAddr::V4(*ip))?;
             println!("allowlist += {ip}");
+        }
+        for ip6 in &cfg.allow6 {
+            allow_insert(&mut ebpf, IpAddr::V6(*ip6))?;
+            println!("allowlist += {ip6}");
         }
         if !cfg.allow_domain.is_empty() {
             refresh_domains(&mut ebpf, &cfg.allow_domain).await?;

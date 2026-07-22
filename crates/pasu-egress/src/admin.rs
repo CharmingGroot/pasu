@@ -12,7 +12,7 @@
 //! The socket only mediates requests; the eBPF `ALLOW` map is owned by the guard
 //! loop, which applies commands one at a time (no shared mutable eBPF state).
 
-use std::net::Ipv4Addr;
+use std::net::IpAddr;
 
 use tokio::sync::oneshot;
 
@@ -20,12 +20,12 @@ use tokio::sync::oneshot;
 #[derive(Debug, PartialEq)]
 pub enum Request {
     Status,
-    Allow(Ipv4Addr),
-    Deny(Ipv4Addr),
+    Allow(IpAddr),
+    Deny(IpAddr),
 }
 
-/// Parse one request line. Case-insensitive verb; a single IPv4 argument for
-/// `allow`/`deny`.
+/// Parse one request line. Case-insensitive verb; a single IP (v4 or v6)
+/// argument for `allow`/`deny`.
 pub fn parse_request(line: &str) -> Result<Request, String> {
     let mut parts = line.split_whitespace();
     let verb = parts.next().unwrap_or_default().to_ascii_lowercase();
@@ -34,10 +34,10 @@ pub fn parse_request(line: &str) -> Result<Request, String> {
         "allow" | "deny" => {
             let arg = parts
                 .next()
-                .ok_or_else(|| format!("{verb}: missing <ipv4>"))?;
-            let ip: Ipv4Addr = arg
+                .ok_or_else(|| format!("{verb}: missing <ip>"))?;
+            let ip: IpAddr = arg
                 .parse()
-                .map_err(|_| format!("{verb}: invalid ipv4 `{arg}`"))?;
+                .map_err(|_| format!("{verb}: invalid ip `{arg}`"))?;
             Ok(if verb == "allow" {
                 Request::Allow(ip)
             } else {
@@ -64,8 +64,8 @@ pub struct Status {
 /// A command handed to the guard loop, with a channel for its reply.
 pub enum Command {
     Status(oneshot::Sender<Status>),
-    Allow(Ipv4Addr, oneshot::Sender<Result<(), String>>),
-    Deny(Ipv4Addr, oneshot::Sender<Result<(), String>>),
+    Allow(IpAddr, oneshot::Sender<Result<(), String>>),
+    Deny(IpAddr, oneshot::Sender<Result<(), String>>),
 }
 
 #[cfg(test)]
@@ -82,11 +82,23 @@ mod tests {
     fn parses_allow_deny() {
         assert_eq!(
             parse_request("allow 1.2.3.4").unwrap(),
-            Request::Allow(Ipv4Addr::new(1, 2, 3, 4))
+            Request::Allow("1.2.3.4".parse().unwrap())
         );
         assert_eq!(
             parse_request("DENY 10.0.0.1").unwrap(),
-            Request::Deny(Ipv4Addr::new(10, 0, 0, 1))
+            Request::Deny("10.0.0.1".parse().unwrap())
+        );
+    }
+
+    #[test]
+    fn parses_ipv6() {
+        assert_eq!(
+            parse_request("allow 2606:4700:4700::1111").unwrap(),
+            Request::Allow("2606:4700:4700::1111".parse().unwrap())
+        );
+        assert_eq!(
+            parse_request("deny ::1").unwrap(),
+            Request::Deny("::1".parse().unwrap())
         );
     }
 
@@ -94,7 +106,6 @@ mod tests {
     fn rejects_bad_input() {
         assert!(parse_request("allow").is_err()); // missing arg
         assert!(parse_request("allow not-an-ip").is_err());
-        assert!(parse_request("allow ::1").is_err()); // ipv4 only
         assert!(parse_request("bogus").is_err());
         assert!(parse_request("").is_err());
     }

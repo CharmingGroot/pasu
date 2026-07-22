@@ -8,6 +8,11 @@ its first tagged release.
 ## [Unreleased]
 
 ### Added
+- **IPv6 kernel egress filtering** — the eBPF guard now enforces default-deny on
+  IPv6 too (new `ALLOW6` map, v6 destination parsing), closing the bypass where
+  a tool could exfiltrate over IPv6. Loopback (`::1`) and infrastructure prefixes
+  (link-local `fe80::/10`, multicast `ff00::/8`) always pass. `allow`/`allow-domain`,
+  the admin socket, and policy lowering all accept v4 and v6.
 - **Proxy parse benchmarks + evidence-backed metrics** — criterion
   micro-benchmarks for the per-response guard cost (`extract` per provider +
   SSE reassembly) alongside the existing policy bench; the README metrics
