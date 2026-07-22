@@ -11,6 +11,7 @@
 //! swap this for OPA / a DSL later without touching them. Design: docs/rules.md
 
 use std::net::{Ipv4Addr, Ipv6Addr};
+use std::path::{Path, PathBuf};
 
 use pasu_core::{Event, EventKind, RuleEngine, Verdict};
 use serde::Deserialize;
@@ -144,6 +145,80 @@ impl Ruleset {
         }
         Ok(out)
     }
+
+    /// Layer a `user` overlay on top of this (project baseline) ruleset.
+    ///
+    /// The overlay's rules take precedence: the engine is first-match, so the
+    /// user's rules are evaluated *before* the baseline's and override them for
+    /// the same target. The merged default action is the stricter of the two —
+    /// `deny` wins (fail-closed). This is how `default/` (project, overwritten
+    /// on upgrade) and `user/` (customization, preserved) compose without either
+    /// clobbering the other; the caller supplies both paths.
+    #[must_use]
+    pub fn layered(mut self, user: Ruleset) -> Ruleset {
+        let mut rules = user.rules;
+        rules.append(&mut self.rules);
+        let default = strictest(self.default, user.default);
+        Ruleset { rules, default }
+    }
+
+    /// Load and concatenate every `*.yaml` / `*.yml` file in `dir`, sorted by
+    /// file name — the `10-…`, `20-…` convention gives explicit ordering, like
+    /// Falco's `rules.d` or `sudoers.d`. A missing directory yields an empty,
+    /// fail-closed (`default: deny`) ruleset. Rules keep file order; the default
+    /// is `deny` unless every file present declares `allow`.
+    pub fn from_dir(dir: &Path) -> std::io::Result<Ruleset> {
+        let mut files: Vec<PathBuf> = match std::fs::read_dir(dir) {
+            Ok(rd) => rd
+                .filter_map(Result::ok)
+                .map(|e| e.path())
+                .filter(|p| {
+                    matches!(
+                        p.extension().and_then(|e| e.to_str()),
+                        Some("yaml") | Some("yml")
+                    )
+                })
+                .collect(),
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => Vec::new(),
+            Err(e) => return Err(e),
+        };
+        files.sort();
+
+        let mut rules = Vec::new();
+        let mut any_file = false;
+        let mut any_deny_default = false;
+        for path in files {
+            any_file = true;
+            let yaml = std::fs::read_to_string(&path)?;
+            let rs = Ruleset::from_yaml(&yaml).map_err(|e| {
+                std::io::Error::new(
+                    std::io::ErrorKind::InvalidData,
+                    format!("{}: {e}", path.display()),
+                )
+            })?;
+            rules.extend(rs.rules);
+            if matches!(rs.default, Action::Deny) {
+                any_deny_default = true;
+            }
+        }
+        // Fail-closed: deny unless at least one file was present and none of the
+        // files declared a `deny` default.
+        let default = if any_file && !any_deny_default {
+            Action::Allow
+        } else {
+            Action::Deny
+        };
+        Ok(Ruleset { rules, default })
+    }
+}
+
+/// The stricter of two default actions (deny > ask > allow) — fail-closed merge.
+fn strictest(a: Action, b: Action) -> Action {
+    match (a, b) {
+        (Action::Deny, _) | (_, Action::Deny) => Action::Deny,
+        (Action::Ask, _) | (_, Action::Ask) => Action::Ask,
+        _ => Action::Allow,
+    }
 }
 
 impl Match {
@@ -203,6 +278,79 @@ impl RuleEngine for RulesetEngine {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    // --- layered / from_dir (default/ + user/ composition) ---
+
+    #[test]
+    fn user_overlay_rules_take_precedence_over_baseline() {
+        // Baseline allows a tool; the user overlay denies it. First-match means
+        // the user rule (evaluated first) wins.
+        let base = Ruleset::from_yaml(
+            "rules:\n  - name: allow-bash\n    match: { tool: Bash }\n    action: allow\ndefault: deny\n",
+        )
+        .unwrap();
+        let user = Ruleset::from_yaml(
+            "rules:\n  - name: deny-bash\n    match: { tool: Bash }\n    action: deny\ndefault: deny\n",
+        )
+        .unwrap();
+        let engine = RulesetEngine::new(base.layered(user));
+        let ev = Event {
+            kind: EventKind::ToolCall {
+                name: "Bash".into(),
+                input: "{}".into(),
+            },
+        };
+        assert!(matches!(engine.evaluate(&ev), Verdict::Deny(_)));
+    }
+
+    #[test]
+    fn layered_default_is_deny_when_either_layer_denies() {
+        let allow_all = Ruleset {
+            rules: vec![],
+            default: Action::Allow,
+        };
+        let deny = Ruleset {
+            rules: vec![],
+            default: Action::Deny,
+        };
+        assert!(matches!(
+            allow_all.clone().layered(deny).default,
+            Action::Deny
+        ));
+        assert!(matches!(
+            allow_all.clone().layered(allow_all).default,
+            Action::Allow
+        ));
+    }
+
+    #[test]
+    fn from_dir_concatenates_sorted_and_missing_is_fail_closed() {
+        let dir = std::env::temp_dir().join("pasu-rules-fromdir-test");
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        // Filenames drive order: 20 loaded after 10, so 10's rule matches first.
+        std::fs::write(
+            dir.join("20-b.yaml"),
+            "rules:\n  - name: b\n    match: { tool: T }\n    action: deny\ndefault: deny\n",
+        )
+        .unwrap();
+        std::fs::write(
+            dir.join("10-a.yaml"),
+            "rules:\n  - name: a\n    match: { tool: T }\n    action: allow\ndefault: allow\n",
+        )
+        .unwrap();
+        std::fs::write(dir.join("notes.txt"), "ignored, not yaml").unwrap();
+
+        let rs = Ruleset::from_dir(&dir).unwrap();
+        assert_eq!(rs.rules.len(), 2);
+        assert_eq!(rs.rules[0].name, "a"); // 10-a.yaml first
+        assert!(matches!(rs.default, Action::Deny)); // 20-b declares deny → deny wins
+
+        // Missing directory → empty, fail-closed.
+        let missing = Ruleset::from_dir(&dir.join("does-not-exist")).unwrap();
+        assert!(missing.rules.is_empty());
+        assert!(matches!(missing.default, Action::Deny));
+    }
 
     const YAML: &str = r#"
 rules:
