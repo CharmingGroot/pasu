@@ -8,6 +8,10 @@ its first tagged release.
 ## [Unreleased]
 
 ### Added
+- **`AGENTS.md` + `.github/skills/`** — a vendor-neutral orientation guide for
+  coding agents and new contributors (build/test, crate map, working rules,
+  deferring to CLAUDE.md as the binding authority), plus step-by-step task
+  recipes for repeatable changes (`add-llm-provider`, `add-audit-sink`).
 - **Layered policy: `default/` + `user/`** — `pasu-rules` gains `Ruleset::from_dir`
   (loads `*.yaml` in a directory, sorted by filename — the `rules.d`/`sudoers.d`
   convention) and `Ruleset::layered` (a user overlay whose rules take precedence,
