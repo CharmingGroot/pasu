@@ -8,6 +8,11 @@ its first tagged release.
 ## [Unreleased]
 
 ### Added
+- **Podman deployment notes** — `docs/deployment.md` documents running the eBPF
+  egress guard under Podman (cgroup-v2-native, daemonless): rootful/privileged
+  `podman run` with `--cgroupns host`, the pod-sidecar mapping (incl. `podman play
+  kube`), and why rootless Podman only fits the cooperative proxy layer. Marked as
+  untested-against-a-live-host, like the Kubernetes examples.
 - **`AGENTS.md` + `.github/skills/`** — a vendor-neutral orientation guide for
   coding agents and new contributors (build/test, crate map, working rules,
   deferring to CLAUDE.md as the binding authority), plus step-by-step task
