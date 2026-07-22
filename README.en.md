@@ -181,10 +181,11 @@ sudo pasu-daemon --policy rules.yaml --cgroup-path /sys/fs/cgroup/my-agent
 sudo pasu-egress --cgroup-path /sys/fs/cgroup/my-agent --allow-domain api.openai.com
 ```
 
-Allow rules with an IPv4 become static entries, and exact hostnames are resolved
-(and re-resolved). Suffix patterns (`.openai.com`) can't be lowered to the kernel
-yet and are only reported — DNS-response sniffing will close that. The kernel
-side is default-deny, so lowering is only ever *narrower* than the policy.
+Allow rules with an IPv4/IPv6 literal become static entries, and exact hostnames
+are resolved (and re-resolved, both families). Suffix patterns (`.openai.com`)
+can't be lowered to the kernel yet and are only reported — DNS-response sniffing
+will close that. The kernel side is default-deny for **both v4 and v6**, so
+lowering is only ever *narrower* than the policy.
 
 Add `--admin-socket /run/pasu.sock` to inspect and edit the live guard without a
 restart (this is what the UI talks to):

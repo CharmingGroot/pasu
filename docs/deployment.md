@@ -109,5 +109,7 @@ cgroup layout.
 - **DNS / `--allow-domain`** re-resolves on an interval; because that lookup runs
   *after* attach, allow your DNS resolver's IP too, or prefer static `--allow`
   IPs where you can.
-- Loopback and non-IPv4 traffic pass; IPv6 egress is not yet filtered.
+- Both IPv4 and IPv6 egress are filtered (default-deny). Loopback (`127.0.0.0/8`,
+  `::1`) and v6 infrastructure prefixes (link-local `fe80::/10`, multicast
+  `ff00::/8`) always pass so basic networking keeps working.
 - This guards **egress**; it is not an ingress firewall.

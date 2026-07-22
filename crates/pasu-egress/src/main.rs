@@ -1,4 +1,4 @@
-use std::net::Ipv4Addr;
+use std::net::{IpAddr, Ipv4Addr, Ipv6Addr};
 
 use anyhow::Context as _;
 use clap::Parser;
@@ -15,9 +15,9 @@ struct Opt {
     /// own egress (SSH included).
     #[clap(short, long)]
     cgroup_path: Option<std::path::PathBuf>,
-    /// Destination IPv4 allowed to egress (repeatable). Everything else is dropped.
+    /// Destination IP (v4 or v6) allowed to egress (repeatable). Everything else is dropped.
     #[clap(short, long = "allow")]
-    allow: Vec<Ipv4Addr>,
+    allow: Vec<IpAddr>,
     /// Domain whose resolved IPv4 addresses are allowed (repeatable). Best-effort,
     /// control-plane resolution (precise DNS-response sniffing is future work, M2b).
     #[clap(short = 'd', long = "allow-domain")]
@@ -41,7 +41,7 @@ struct Config {
     /// Dedicated cgroup v2 path (never the root cgroup).
     cgroup_path: std::path::PathBuf,
     #[serde(default)]
-    allow: Vec<Ipv4Addr>,
+    allow: Vec<IpAddr>,
     #[serde(default)]
     allow_domain: Vec<String>,
     #[serde(default = "default_refresh_secs")]
@@ -73,9 +73,18 @@ impl Opt {
 
 impl From<Config> for GuardConfig {
     fn from(cfg: Config) -> Self {
+        let mut allow: Vec<Ipv4Addr> = Vec::new();
+        let mut allow6: Vec<Ipv6Addr> = Vec::new();
+        for ip in cfg.allow {
+            match ip {
+                IpAddr::V4(v4) => allow.push(v4),
+                IpAddr::V6(v6) => allow6.push(v6),
+            }
+        }
         GuardConfig {
             cgroup_path: cfg.cgroup_path,
-            allow: cfg.allow,
+            allow,
+            allow6,
             allow_domain: cfg.allow_domain,
             refresh_secs: cfg.refresh_secs,
             admin_socket: cfg.admin_socket,
@@ -106,7 +115,7 @@ mod tests {
             cfg.cgroup_path,
             std::path::PathBuf::from("/sys/fs/cgroup/pasu-agent")
         );
-        assert_eq!(cfg.allow, vec![Ipv4Addr::new(1, 0, 0, 1)]);
+        assert_eq!(cfg.allow, vec![IpAddr::V4(Ipv4Addr::new(1, 0, 0, 1))]);
         assert_eq!(cfg.allow_domain, vec!["api.openai.com".to_string()]);
         assert_eq!(cfg.refresh_secs, 30); // serde default
     }

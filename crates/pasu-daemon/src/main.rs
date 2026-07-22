@@ -40,19 +40,23 @@ fn load(opt: Opt) -> anyhow::Result<GuardConfig> {
     for ip in &allowlist.ips {
         println!("  kernel allow ip     {ip}");
     }
+    for ip6 in &allowlist.ips6 {
+        println!("  kernel allow ip     {ip6}");
+    }
     for d in &allowlist.domains {
         println!("  kernel allow domain {d}");
     }
     for s in &allowlist.skipped {
         println!("  hook-layer only     {} ({})", s.rule, s.reason);
     }
-    if allowlist.ips.is_empty() && allowlist.domains.is_empty() {
+    if allowlist.ips.is_empty() && allowlist.ips6.is_empty() && allowlist.domains.is_empty() {
         println!("  (no kernel-expressible allow rules: everything is dropped)");
     }
 
     Ok(GuardConfig {
         cgroup_path: opt.cgroup_path,
         allow: allowlist.ips,
+        allow6: allowlist.ips6,
         allow_domain: allowlist.domains,
         refresh_secs: opt.refresh_secs,
         admin_socket: opt.admin_socket,

@@ -145,7 +145,7 @@ sudo pasu-daemon --policy rules.yaml --cgroup-path /sys/fs/cgroup/my-agent
 sudo pasu-egress --cgroup-path /sys/fs/cgroup/my-agent --allow-domain api.openai.com
 ```
 
-IPv4 allow는 정적 항목이 되고, 정확한 호스트명은 주기적으로 재해석됩니다. 접미 패턴(`.openai.com`)은 아직 커널로 내려가지 못해 리포트만 남깁니다 — DNS 응답 스니핑이 들어오면 해결됩니다. 커널은 기본 차단이라, 변환 결과는 정책보다 좁아질 뿐 넓어지지 않습니다.
+IPv4/IPv6 리터럴 allow는 정적 항목이 되고, 정확한 호스트명은 주기적으로 재해석됩니다(양 계열). 접미 패턴(`.openai.com`)은 아직 커널로 내려가지 못해 리포트만 남깁니다 — DNS 응답 스니핑이 들어오면 해결됩니다. 커널은 **v4·v6 모두 기본 차단**이라, 변환 결과는 정책보다 좁아질 뿐 넓어지지 않습니다.
 
 `--admin-socket /run/pasu.sock`을 붙이면 재시작 없이 실행 중인 가드를 들여다보고 수정할 수 있습니다 (UI도 이 소켓을 씁니다).
 
