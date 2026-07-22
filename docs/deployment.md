@@ -36,8 +36,9 @@ the root would cut the host's own egress (SSH included).
 - Kernel with BPF cgroup support (≈5.8+ for `CAP_BPF`; older kernels need `CAP_SYS_ADMIN`)
 - Capabilities: **`CAP_BPF` + `CAP_NET_ADMIN`** (+ `CAP_PERFMON` on some kernels).
   `--privileged` is the easy path; the least-privilege set is `--cap-add`.
-- The **`bpf()` syscall must not be blocked by seccomp** — Docker's default
-  seccomp profile blocks it, so use `--privileged` or a profile that allows `bpf`.
+- The **`bpf()` syscall must not be blocked by seccomp** — Docker's (and Podman's)
+  default seccomp profile blocks it, so use `--privileged` or a profile that
+  allows `bpf`.
 - A **cgroup v2 mount** in the container (`/sys/fs/cgroup`) covering the target.
 
 ## 1. Build
@@ -93,6 +94,47 @@ guard to that slice. The agent log shows `1.1.1.1` allowed and `1.0.0.1`
 
 Both are examples — set the image, allowlist, and attach path for your runtime's
 cgroup layout.
+
+## 5. Podman
+
+The "one rule" is runtime-agnostic: pasu-egress needs a **cgroup v2** node and the
+capability to attach a `cgroup_skb` program to it — not Docker specifically.
+Podman is **cgroup-v2-native and daemonless**, so the requirements above map
+cleanly. Two paths, mirroring the Docker ones:
+
+**Rootful, privileged** (the direct analog of §2/§3) — build with `podman build`
+(same [`deploy/Dockerfile`](../deploy/Dockerfile)), then:
+
+```bash
+sudo podman run --rm --privileged --cgroupns host --entrypoint /bin/sh \
+  pasu-egress:latest -c '
+    pasu-egress --cgroup-path /sys/fs/cgroup --allow 1.1.1.1 &
+    sleep 3
+    curl -s --max-time 6 http://1.1.1.1 && echo "1.1.1.1 OK"       # allowed
+    curl -s --max-time 6 http://1.0.0.1 || echo "1.0.0.1 dropped"  # blocked
+'
+```
+
+The same two gotchas from §4 apply: pass **`--cgroupns host`** (Podman also gives a
+private cgroupns by default), and Podman's default seccomp profile blocks `bpf()`
+too — `--privileged` clears it, or grant `CAP_BPF` + `CAP_NET_ADMIN` (+ `CAP_PERFMON`)
+with a seccomp profile that allows `bpf`.
+
+**Pod sidecar** — a Podman pod shares a cgroup across its containers, so it maps
+directly onto the Kubernetes sidecar model (§4). The [k8s manifests](../deploy/k8s/)
+also run under Podman via `podman play kube`: the privileged pasu-egress container
+attaches to the shared pod cgroup and guards the agent container.
+
+> ⚠️ **Rootless Podman is the hard case.** A rootless container runs in a user
+> namespace with a delegated cgroup subtree, and attaching a cgroup-BPF program
+> generally still needs real (host) privilege — so the enforcing layer expects
+> **rootful** Podman. (The cooperative `pasu-proxy` layer, being an unprivileged
+> userspace library/binary, runs fine rootless — `podman run` it and point the
+> agent's `base_url` at it.)
+
+> These Podman commands follow the same shape as the verified Docker paths but
+> have **not been run against a live Podman host** — treat them as a starting
+> point, like the Kubernetes examples above.
 
 ### Two gotchas we hit validating this (so you don't have to)
 
