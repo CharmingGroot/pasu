@@ -8,6 +8,13 @@ its first tagged release.
 ## [Unreleased]
 
 ### Added
+- **Layered policy: `default/` + `user/`** — `pasu-rules` gains `Ruleset::from_dir`
+  (loads `*.yaml` in a directory, sorted by filename — the `rules.d`/`sudoers.d`
+  convention) and `Ruleset::layered` (a user overlay whose rules take precedence,
+  default merged deny-wins). `pasu-daemon --policy-dir <dir>` loads
+  `<dir>/default/` (project-shipped, overwritten on upgrade) under `<dir>/user/`
+  (customization, preserved) so upgrades never clobber user rules. `--policy
+  <file>` still works; the two are mutually exclusive.
 - **IPv6 kernel egress filtering** — the eBPF guard now enforces default-deny on
   IPv6 too (new `ALLOW6` map, v6 destination parsing), closing the bypass where
   a tool could exfiltrate over IPv6. Loopback (`::1`) and infrastructure prefixes
