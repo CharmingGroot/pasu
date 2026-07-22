@@ -1,0 +1,10 @@
+# Keep the build context small — the Dockerfile only needs sources + Cargo
+# manifests. Everything below is either rebuilt inside the image or irrelevant.
+target/
+.git/
+*.md
+docs/
+deploy/
+.github/
+.vscode/
+.idea/

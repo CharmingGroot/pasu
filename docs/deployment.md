@@ -100,13 +100,19 @@ cgroup layout.
 The "one rule" is runtime-agnostic: pasu-egress needs a **cgroup v2** node and the
 capability to attach a `cgroup_skb` program to it — not Docker specifically.
 Podman is **cgroup-v2-native and daemonless**, so the requirements above map
-cleanly. Two paths, mirroring the Docker ones:
+cleanly. Run it **rootful** (`sudo podman`); see the rootless note below.
 
-**Rootful, privileged** (the direct analog of §2/§3) — build with `podman build`
-(same [`deploy/Dockerfile`](../deploy/Dockerfile)), then:
+Podman's default seccomp profile blocks `bpf()` just like Docker's, so
+`--privileged` is the easy path (or grant `CAP_BPF` + `CAP_NET_ADMIN`
+(+ `CAP_PERFMON`) with a profile that allows `bpf`).
+
+**Self-guard (one container)** — attaches to the container's own cgroup, so use
+Podman's **default (private) cgroupns**; `/sys/fs/cgroup` is then the container's
+own cgroup. Build with `podman build` (same [`deploy/Dockerfile`](../deploy/Dockerfile)),
+then:
 
 ```bash
-sudo podman run --rm --privileged --cgroupns host --entrypoint /bin/sh \
+sudo podman run --rm --privileged --entrypoint /bin/sh \
   pasu-egress:latest -c '
     pasu-egress --cgroup-path /sys/fs/cgroup --allow 1.1.1.1 &
     sleep 3
@@ -115,15 +121,28 @@ sudo podman run --rm --privileged --cgroupns host --entrypoint /bin/sh \
 '
 ```
 
-The same two gotchas from §4 apply: pass **`--cgroupns host`** (Podman also gives a
-private cgroupns by default), and Podman's default seccomp profile blocks `bpf()`
-too — `--privileged` clears it, or grant `CAP_BPF` + `CAP_NET_ADMIN` (+ `CAP_PERFMON`)
-with a seccomp profile that allows `bpf`.
+> ⚠️ **Do _not_ add `--cgroupns host` to the self-guard command.** With the host
+> cgroupns, `/sys/fs/cgroup` is the **host root cgroup**, and default-deny there
+> cuts the whole host's egress (verified: the host itself lost egress to
+> non-allowed IPs). `--cgroupns host` is only for the sidecar case below, and
+> then you attach to a **dedicated** cgroup path, never `/sys/fs/cgroup`.
 
-**Pod sidecar** — a Podman pod shares a cgroup across its containers, so it maps
-directly onto the Kubernetes sidecar model (§4). The [k8s manifests](../deploy/k8s/)
-also run under Podman via `podman play kube`: the privileged pasu-egress container
-attaches to the shared pod cgroup and guards the agent container.
+**Sidecar (guard a separate container)** — the guard needs `--cgroupns host` to
+reach the target's cgroup, and attaches to that **specific** cgroup path (from
+`podman inspect`), which scopes enforcement to the target and leaves the host
+untouched:
+
+```bash
+sudo podman run -d --name agent ...                 # your agent workload
+AGCG=$(sudo podman inspect agent --format '{{.State.CgroupPath}}')
+sudo podman run -d --privileged --cgroupns host --entrypoint pasu-egress \
+  pasu-egress:latest --cgroup-path "/sys/fs/cgroup$AGCG" --allow 1.1.1.1
+# agent now reaches 1.1.1.1 but not 1.0.0.1; the host's own egress is unaffected.
+```
+
+A Podman **pod** shares a cgroup across its containers, so `podman play kube` on
+the [k8s manifests](../deploy/k8s/) maps onto the same sidecar model (§4) — the
+privileged pasu-egress container attaches to the pod's cgroup slice.
 
 > ⚠️ **Rootless Podman is the hard case.** A rootless container runs in a user
 > namespace with a delegated cgroup subtree, and attaching a cgroup-BPF program
@@ -132,9 +151,11 @@ attaches to the shared pod cgroup and guards the agent container.
 > userspace library/binary, runs fine rootless — `podman run` it and point the
 > agent's `base_url` at it.)
 
-> These Podman commands follow the same shape as the verified Docker paths but
-> have **not been run against a live Podman host** — treat them as a starting
-> point, like the Kubernetes examples above.
+> **Verified** on Lima (Ubuntu 24.04, kernel 6.8, cgroup v2, **Podman 4.9.3**,
+> arm64): the self-guard and sidecar commands above both enforce the allowlist in
+> the kernel while leaving host egress intact; `--cgroupns host` on a
+> `/sys/fs/cgroup` attach cuts the host, as warned. `podman play kube` is inferred
+> from the shared-cgroup model, not separately run.
 
 ### Two gotchas we hit validating this (so you don't have to)
 

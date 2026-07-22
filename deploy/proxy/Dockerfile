@@ -10,14 +10,14 @@
 #   docker build -f deploy/proxy/Dockerfile -t pasu-proxy:latest .
 
 ########## builder ##########
-FROM rust:1-bookworm AS builder
+FROM docker.io/library/rust:1-bookworm AS builder
 WORKDIR /src
 COPY . .
 # Portable/stable build — the proxy crate needs no eBPF toolchain.
 RUN cargo build --release -p pasu-proxy --bin pasu-proxy
 
 ########## runtime ##########
-FROM debian:bookworm-slim
+FROM docker.io/library/debian:bookworm-slim
 # CA roots for TLS to the real provider (https upstream).
 RUN apt-get update \
  && apt-get install -y --no-install-recommends ca-certificates \

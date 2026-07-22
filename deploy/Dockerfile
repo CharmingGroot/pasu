@@ -12,7 +12,7 @@
 # a cgroup v2 mount, and a DEDICATED cgroup to attach to).
 
 ########## builder ##########
-FROM rust:1-bookworm AS builder
+FROM docker.io/library/rust:1-bookworm AS builder
 
 # eBPF build toolchain: nightly + rust-src (build-std for the bpf target).
 RUN rustup toolchain install nightly --profile minimal --component rust-src \
@@ -35,7 +35,7 @@ COPY . .
 RUN cargo build -p pasu-egress -p pasu-daemon -p pasu-cli --release
 
 ########## runtime ##########
-FROM debian:bookworm-slim AS runtime
+FROM docker.io/library/debian:bookworm-slim AS runtime
 
 # ca-certificates for DNS/TLS metadata; curl + iproute2 + socat make the image
 # useful for the demo / admin CLI. Drop them for a smaller production image.
