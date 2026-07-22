@@ -1,11 +1,15 @@
 # Changelog
 
 All notable changes to pasu are documented here. The format follows
-[Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and the project aims
-for [Semantic Versioning](https://semver.org/spec/v2.0.0.html) once it reaches
-its first tagged release.
+[Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and the project follows
+[Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
+
+## [0.1.0] - 2026-07-22
+
+First tagged release — the two-layer guard (LLM-API proxy + eBPF kernel egress)
+with policy, HITL UI, audit, containers, and verified deploy paths.
 
 ### Added
 - **Podman deployment notes (verified)** — `docs/deployment.md` documents running
