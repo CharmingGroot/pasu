@@ -13,9 +13,16 @@ use pasu_rules::Ruleset;
 
 #[derive(Debug, Parser)]
 struct Opt {
-    /// The pasu policy YAML — the SAME file the proxy loads.
+    /// A single pasu policy YAML — the SAME file the proxy loads. Mutually
+    /// exclusive with `--policy-dir`.
     #[clap(short, long)]
-    policy: std::path::PathBuf,
+    policy: Option<std::path::PathBuf>,
+    /// A policy directory with `default/` (project-shipped, overwritten on
+    /// upgrade) and `user/` (customization, preserved) subdirs of `*.yaml`
+    /// rules. The user rules layer on top (take precedence). Mutually exclusive
+    /// with `--policy`.
+    #[clap(long)]
+    policy_dir: Option<std::path::PathBuf>,
     /// cgroup v2 path to attach to. Must be a DEDICATED cgroup: default-deny on
     /// the root cgroup would cut the host's own egress (SSH included).
     #[clap(short, long)]
@@ -29,14 +36,37 @@ struct Opt {
     admin_socket: Option<std::path::PathBuf>,
 }
 
+/// Load the ruleset from exactly one of `--policy <file>` or `--policy-dir
+/// <dir>` (the latter layers `user/` over `default/`).
+fn load_ruleset(opt: &Opt) -> anyhow::Result<Ruleset> {
+    match (&opt.policy, &opt.policy_dir) {
+        (Some(file), None) => {
+            let yaml = std::fs::read_to_string(file)
+                .with_context(|| format!("read policy {}", file.display()))?;
+            Ruleset::from_yaml(&yaml).with_context(|| format!("parse policy {}", file.display()))
+        }
+        (None, Some(dir)) => {
+            let base = Ruleset::from_dir(&dir.join("default"))
+                .with_context(|| format!("read {}/default", dir.display()))?;
+            let user = Ruleset::from_dir(&dir.join("user"))
+                .with_context(|| format!("read {}/user", dir.display()))?;
+            Ok(base.layered(user))
+        }
+        (Some(_), Some(_)) => anyhow::bail!("use only one of --policy or --policy-dir"),
+        (None, None) => anyhow::bail!("provide --policy <file> or --policy-dir <dir>"),
+    }
+}
+
 fn load(opt: Opt) -> anyhow::Result<GuardConfig> {
-    let yaml = std::fs::read_to_string(&opt.policy)
-        .with_context(|| format!("read policy {}", opt.policy.display()))?;
-    let ruleset = Ruleset::from_yaml(&yaml)
-        .with_context(|| format!("parse policy {}", opt.policy.display()))?;
+    let ruleset = load_ruleset(&opt)?;
     let allowlist = ruleset.egress_allowlist()?;
 
-    println!("policy: {}", opt.policy.display());
+    let source = match (&opt.policy, &opt.policy_dir) {
+        (Some(file), _) => file.display().to_string(),
+        (_, Some(dir)) => format!("{}/{{default,user}}", dir.display()),
+        _ => String::new(),
+    };
+    println!("policy: {source}");
     for ip in &allowlist.ips {
         println!("  kernel allow ip     {ip}");
     }
@@ -76,7 +106,8 @@ mod tests {
 
     fn opt(policy: &std::path::Path) -> Opt {
         Opt {
-            policy: policy.to_path_buf(),
+            policy: Some(policy.to_path_buf()),
+            policy_dir: None,
             cgroup_path: "/sys/fs/cgroup/pasu-agent".into(),
             refresh_secs: 30,
             admin_socket: None,
@@ -114,5 +145,54 @@ mod tests {
         let path = dir.join("rules.yaml");
         std::fs::write(&path, "rules: []\ndefault: allow\n").unwrap();
         assert!(load(opt(&path)).is_err());
+    }
+
+    #[test]
+    fn policy_dir_layers_user_over_default() {
+        let root = std::env::temp_dir().join("pasu-daemon-test-policydir");
+        let _ = std::fs::remove_dir_all(&root);
+        std::fs::create_dir_all(root.join("default")).unwrap();
+        std::fs::create_dir_all(root.join("user")).unwrap();
+        // Project baseline allows 1.1.1.1; user adds 9.9.9.9. Both reach the kernel.
+        std::fs::write(
+            root.join("default/00-base.yaml"),
+            "rules:\n  - name: base\n    match: { host: \"1.1.1.1\" }\n    action: allow\ndefault: deny\n",
+        )
+        .unwrap();
+        std::fs::write(
+            root.join("user/10-mine.yaml"),
+            "rules:\n  - name: mine\n    match: { host: \"9.9.9.9\" }\n    action: allow\ndefault: deny\n",
+        )
+        .unwrap();
+
+        let o = Opt {
+            policy: None,
+            policy_dir: Some(root.clone()),
+            cgroup_path: "/sys/fs/cgroup/pasu-agent".into(),
+            refresh_secs: 30,
+            admin_socket: None,
+        };
+        let cfg = load(o).unwrap();
+        let mut ips = cfg.allow.clone();
+        ips.sort();
+        assert_eq!(
+            ips,
+            vec![
+                std::net::Ipv4Addr::new(1, 1, 1, 1),
+                std::net::Ipv4Addr::new(9, 9, 9, 9)
+            ]
+        );
+    }
+
+    #[test]
+    fn requires_exactly_one_policy_source() {
+        let o = Opt {
+            policy: None,
+            policy_dir: None,
+            cgroup_path: "/sys/fs/cgroup/pasu-agent".into(),
+            refresh_secs: 30,
+            admin_socket: None,
+        };
+        assert!(load(o).is_err());
     }
 }
