@@ -3,6 +3,10 @@
 This file defines rules that Claude (and contributors) **must follow** when working in Pasu.
 These rules take precedence over default behavior.
 
+> New here? Start at [AGENTS.md](AGENTS.md) for orientation (build/test, crate map,
+> common-task recipes). **This file is the binding authority** — if AGENTS.md and
+> this file ever disagree, CLAUDE.md wins.
+
 ## Project
 
 Pasu is a Rust security guard for AI agents. Its core is a kernel **eBPF egress guard** (language-agnostic, enforcing), extended by an **LLM-API proxy** that guards tool calls by parsing provider responses (framework-agnostic — any SDK, `base_url` only). The differentiator is **enforcing** (the kernel actually blocks egress, unbypassable) rather than cooperative (only sees what is declared).
