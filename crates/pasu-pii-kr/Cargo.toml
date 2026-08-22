@@ -1,0 +1,27 @@
+[package]
+name = "pasu-pii-kr"
+version = "0.1.0"
+description = "한국 개인식별정보(PII)를 탐지해 차단 판정을 내리는 경량 필터. 규칙은 YAML로 관리한다."
+keywords = ["pii", "privacy", "korea", "llm", "filter"]
+categories = ["text-processing"]
+readme = "README.md"
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+
+[dependencies]
+# 유일한 필수 의존성. 백트래킹이 없어 입력에 대해 선형 시간이 보장된다(ReDoS 면역).
+regex = { version = "1", default-features = false, features = ["std", "perf", "unicode-perl"] }
+serde = { version = "1", features = ["derive"], optional = true }
+serde_yml = { version = "0.0.12", optional = true }
+
+[features]
+default = ["yaml", "ko"]
+# 규칙을 YAML 파일에서 읽는다. 끄면 내장 기본 규칙만 사용하며 의존성은 regex 하나가 된다.
+yaml = ["dep:serde", "dep:serde_yml"]
+# 한국 식별번호 검증기(주민등록번호·사업자등록번호).
+ko = []
+
+[dev-dependencies]
+serde = { version = "1", features = ["derive"] }
+serde_yml = "0.0.12"

@@ -1,0 +1,82 @@
+name: pii-kr
+
+# pasu-pii-kr 전용 파이프라인.
+# 이 크레이트는 순수 stable Rust라 eBPF 툴체인이 필요 없다. 본 CI(ci.yml)의
+# 무거운 잡들과 분리해, 이 크레이트만 바뀌었을 때는 여기만 돌게 한다.
+on:
+  push:
+    branches: [main, "release/**"]
+    paths:
+      - "crates/pasu-pii-kr/**"
+      - ".github/workflows/pii.yml"
+  pull_request:
+    paths:
+      - "crates/pasu-pii-kr/**"
+      - ".github/workflows/pii.yml"
+
+permissions:
+  contents: read
+
+concurrency:
+  group: pii-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  check:
+    name: fmt · clippy · test · 의존성 예산
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt, clippy
+      - uses: Swatinem/rust-cache@v2
+
+      - name: fmt
+        run: cargo fmt -p pasu-pii-kr -- --check
+
+      - name: clippy
+        run: cargo clippy -p pasu-pii-kr --all-targets -- -D warnings
+
+      - name: test (기본 구성)
+        run: cargo test -p pasu-pii-kr
+
+      # 규칙 파일 없이 내장 규칙만으로도 동작해야 한다.
+      - name: test (최소 구성 — regex 하나)
+        run: cargo test -p pasu-pii-kr --no-default-features --features ko --lib
+
+      # CLAUDE.md의 의존성 예산: 최소 구성의 직접 의존성은 regex 하나.
+      - name: 의존성 예산 확인
+        run: |
+          deps=$(cargo tree -p pasu-pii-kr --no-default-features --features ko \
+                   --edges normal --depth 1 --prefix none \
+                 | tail -n +2 | awk 'NF' | wc -l | tr -d ' ')
+          echo "최소 구성 직접 의존성: $deps"
+          if [ "$deps" -ne 1 ]; then
+            echo "::error::최소 구성의 직접 의존성은 regex 하나여야 한다 (현재 $deps개)"
+            cargo tree -p pasu-pii-kr --no-default-features --features ko --edges normal --depth 1
+            exit 1
+          fi
+
+  bench:
+    name: 성능 회귀 감시
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      # 절대 수치는 러너에 따라 흔들리므로 임계값을 넉넉히 둔다.
+      # 잡으려는 것은 "유니코드 모드로 되돌아가 100배 느려지는" 류의 사고다.
+      - name: bench
+        run: |
+          out=$(cargo run --release -p pasu-pii-kr --example bench)
+          echo "$out"
+          slow=$(echo "$out" | awk '{for(i=1;i<=NF;i++) if($i=="µs/회") print $(i-1)}' \
+                 | awk '$1 > 200 {c++} END {print c+0}')
+          if [ "$slow" -gt 0 ]; then
+            echo "::error::200µs를 넘는 항목이 있다 — 패턴이 유니코드 모드로 돌아갔는지 확인"
+            exit 1
+          fi
