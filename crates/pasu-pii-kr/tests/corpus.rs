@@ -42,7 +42,7 @@ fn corpus_matches_expectations() {
 
     for path in files {
         let text = std::fs::read_to_string(&path).expect("코퍼스 읽기");
-        let corpus: Corpus = serde_yml::from_str(&text).expect("코퍼스 해석");
+        let corpus: Corpus = serde_yaml::from_str(&text).expect("코퍼스 해석");
 
         for case in corpus.cases {
             let verdict = filter.check(&case.text);

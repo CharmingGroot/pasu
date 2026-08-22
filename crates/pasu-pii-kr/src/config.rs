@@ -20,7 +20,7 @@ impl Filter {
     /// 해석 실패, 잘못된 정규식, 알 수 없는 검증기.
     pub fn from_yaml(yaml: &str) -> Result<Self, Error> {
         let parsed: RuleFile =
-            serde_yml::from_str(yaml).map_err(|e| Error::Config(e.to_string()))?;
+            serde_yaml::from_str(yaml).map_err(|e| Error::Config(e.to_string()))?;
         Self::from_rules(parsed.rules)
     }
 
@@ -49,7 +49,7 @@ impl Filter {
             for f in files {
                 let text = std::fs::read_to_string(&f)
                     .map_err(|e| Error::Config(format!("{}: {e}", f.display())))?;
-                let parsed: RuleFile = serde_yml::from_str(&text)
+                let parsed: RuleFile = serde_yaml::from_str(&text)
                     .map_err(|e| Error::Config(format!("{}: {e}", f.display())))?;
                 rules.extend(parsed.rules);
             }

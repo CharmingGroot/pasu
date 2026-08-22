@@ -13,15 +13,16 @@ repository.workspace = true
 # 유일한 필수 의존성. 백트래킹이 없어 입력에 대해 선형 시간이 보장된다(ReDoS 면역).
 regex = { version = "1", default-features = false, features = ["std", "perf", "unicode-perl"] }
 serde = { version = "1", features = ["derive"], optional = true }
-serde_yml = { version = "0.0.12", optional = true }
+# pasu-rules 와 같은 크레이트를 쓴다(워크스페이스에 이미 있어 새 의존성이 늘지 않는다).
+serde_yaml = { version = "0.9", optional = true }
 
 [features]
 default = ["yaml", "ko"]
 # 규칙을 YAML 파일에서 읽는다. 끄면 내장 기본 규칙만 사용하며 의존성은 regex 하나가 된다.
-yaml = ["dep:serde", "dep:serde_yml"]
+yaml = ["dep:serde", "dep:serde_yaml"]
 # 한국 식별번호 검증기(주민등록번호·사업자등록번호).
 ko = []
 
 [dev-dependencies]
 serde = { version = "1", features = ["derive"] }
-serde_yml = "0.0.12"
+serde_yaml = "0.9"
