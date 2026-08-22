@@ -24,7 +24,7 @@ pub fn is_valid(s: &str) -> bool {
             v
         })
         .sum();
-    sum % 10 == 0
+    sum.is_multiple_of(10)
 }
 
 #[cfg(test)]

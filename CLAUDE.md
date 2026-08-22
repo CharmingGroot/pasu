@@ -30,6 +30,11 @@ Two layers:
 | LLM-API proxy | provider-API boundary (cooperative) | tool-call gate + HITL by parsing provider responses; framework-agnostic | `pasu-proxy` |
 | eBPF egress | kernel (enforcing) | `connect()` / cgroup egress block — unbypassable | `pasu-egress` + `pasu-ebpf` |
 
+Companion crate **`pasu-pii-kr`** blocks Korean PII in text bound for an LLM. It
+depends on no other pasu crate (standalone by design); its working rules and
+domain notes live in [crates/pasu-pii-kr/README.md](crates/pasu-pii-kr/README.md),
+and it is checked by its own pipeline `.github/workflows/pii.yml`.
+
 The proxy filters tool-call intent first; egress that bypasses it (e.g. a tool's own network code) is stopped at the kernel.
 
 Detailed design lives in `docs/` (positioning · architecture · repo-structure · rules · testing; in progress).

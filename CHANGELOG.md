@@ -6,6 +6,21 @@ All notable changes to pasu are documented here. The format follows
 
 ## [Unreleased]
 
+### Added
+- **`pasu-pii-kr` — Korean PII blocking filter** (new crate). Detects resident
+  registration numbers, business registration numbers, card numbers and mobile
+  numbers in text bound for an LLM, and returns an allow/deny verdict. Regex
+  finds candidates; **checksums and date validity confirm them**, which removes
+  the false positives a regex-only approach produces. Only the backtracking-free
+  `regex` crate is used, so user-supplied rules cannot stall the process (ReDoS).
+  Default rules are embedded (works with no config) and can be replaced or
+  extended with YAML — `rules/user/` is evaluated before `rules/default/`, so
+  exceptions are just `action: allow`. The crate depends on no other pasu crate
+  and is usable standalone; its minimal build has exactly one direct dependency
+  and CI enforces that budget. Checked by a dedicated pipeline
+  (`.github/workflows/pii.yml`), separate from the eBPF jobs.
+  Measured (Apple M4): 0.14 µs for a short prompt, 15.6 µs for 20 KB.
+
 ## [0.1.0] - 2026-07-22
 
 First tagged release — the two-layer guard (LLM-API proxy + eBPF kernel egress)
