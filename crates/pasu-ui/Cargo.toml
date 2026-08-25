@@ -18,7 +18,9 @@ tokio = { workspace = true, features = [
     "time",
     "net",
     "io-util",
+    # graceful shutdown: SIGINT/SIGTERM 대기
+    "signal",
 ] }
 
 [dev-dependencies]
-tokio = { workspace = true, features = ["rt-multi-thread", "macros", "sync", "time"] }
+tokio = { workspace = true, features = ["rt-multi-thread", "macros", "sync", "time", "signal"] }

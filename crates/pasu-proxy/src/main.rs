@@ -14,6 +14,7 @@
 
 use std::net::SocketAddr;
 use std::sync::Arc;
+use std::time::Duration;
 
 use anyhow::Context as _;
 use clap::Parser;
@@ -42,6 +43,17 @@ struct Opt {
     /// omit to fail-closed on `Ask`.
     #[clap(long)]
     ui: Option<String>,
+    /// Seconds to wait for the upstream TCP+TLS handshake.
+    #[clap(long, default_value_t = 10)]
+    connect_timeout_secs: u64,
+    /// Seconds to wait between reads from the upstream response.
+    ///
+    /// This is an *idle* timeout, not a total one: a long generation (or a
+    /// streaming response that keeps sending) never trips it, but an upstream
+    /// that stops responding mid-body does. A total timeout would cut off
+    /// legitimate long completions.
+    #[clap(long, default_value_t = 120)]
+    read_timeout_secs: u64,
 }
 
 fn parse_provider(s: &str) -> anyhow::Result<Provider> {
@@ -97,7 +109,10 @@ where
         .await
         .with_context(|| format!("bind {listen}"))?;
     eprintln!("pasu-proxy listening on {listen}");
+    // 종료 신호를 받으면 처리 중인 요청을 마친 뒤 닫는다. 중간에 끊으면
+    // 에이전트가 절단된 응답을 받는다.
     axum::serve(listener, router(state))
+        .with_graceful_shutdown(pasu_ui::shutdown::signal())
         .await
         .context("serve")?;
     Ok(())
@@ -108,7 +123,14 @@ async fn main() -> anyhow::Result<()> {
     let opt = Opt::parse();
     let provider = parse_provider(&opt.provider)?;
     let engine = load_engine(&opt.policy)?;
-    let client = reqwest::Client::new();
+    // 타임아웃이 없으면 응답하지 않는 업스트림이 요청을 무한히 붙잡고,
+    // 커넥션이 쌓여 프록시가 가용성 병목이 된다. 다만 전체(total) 타임아웃은
+    // 긴 생성·스트리밍을 잘라내므로 연결/유휴로 나눠 건다.
+    let client = reqwest::Client::builder()
+        .connect_timeout(Duration::from_secs(opt.connect_timeout_secs))
+        .read_timeout(Duration::from_secs(opt.read_timeout_secs))
+        .build()
+        .context("build upstream HTTP client")?;
 
     eprintln!(
         "pasu-proxy -> upstream {} (provider: {})",

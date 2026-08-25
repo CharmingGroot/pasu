@@ -9,6 +9,8 @@
 //! on top of the observability stream (M5). Design: roadmap.md
 
 pub mod dashboard;
+pub mod shutdown;
+
 
 use std::collections::{HashMap, VecDeque};
 use std::sync::atomic::{AtomicU64, Ordering};
@@ -233,7 +235,11 @@ pub async fn serve_all(
     egress: Option<dashboard::EgressUi>,
 ) -> std::io::Result<()> {
     let listener = tokio::net::TcpListener::bind(addr).await?;
-    axum::serve(listener, router_with_dashboard(approvals, feed, egress)).await
+    // 종료 신호를 받으면 처리 중인 요청을 마친 뒤 닫는다. 승인 대기 중인
+    // 요청이 응답 없이 끊기면 호출자 쪽에서 fail-closed 로 처리된다.
+    axum::serve(listener, router_with_dashboard(approvals, feed, egress))
+        .with_graceful_shutdown(shutdown::signal())
+        .await
 }
 
 async fn audit_index(
