@@ -8,10 +8,11 @@
 use std::future::Future;
 use std::net::{IpAddr, Ipv4Addr, Ipv6Addr};
 use std::path::PathBuf;
+use std::sync::Arc;
 use std::time::Duration;
 
 use anyhow::Context as _;
-use aya::maps::HashMap as AyaHashMap;
+use aya::maps::{HashMap as AyaHashMap, RingBuf};
 use aya::programs::{CgroupSkb, CgroupSkbAttachType, links::CgroupAttachMode};
 #[rustfmt::skip]
 use log::{debug, warn};
@@ -20,10 +21,12 @@ use tokio::net::UnixListener;
 use tokio::signal;
 use tokio::sync::{mpsc, oneshot};
 
+use pasu_core::{AuditRecord, AuditSink, Event, EventKind, Verdict};
+use pasu_ebpf_common::DropEvent;
+
 use crate::admin::{self, Command, Status};
 
 /// Everything the guard needs to run: where to attach and what to allow.
-#[derive(Debug)]
 pub struct GuardConfig {
     /// Dedicated cgroup v2 path (never the root cgroup).
     pub cgroup_path: PathBuf,
@@ -37,6 +40,26 @@ pub struct GuardConfig {
     pub refresh_secs: u64,
     /// Optional control-plane admin socket (unix). None disables it.
     pub admin_socket: Option<PathBuf>,
+    /// Where kernel drops are recorded. None keeps the previous behaviour
+    /// (the kernel blocks silently).
+    ///
+    /// 강제 계층이 아무 기록을 남기지 않으면 운영자는 "왜 못 나갔는지"를
+    /// 감사 로그로 답할 수 없다. 협조 계층(proxy)은 이미 기록하고 있었다.
+    pub audit: Option<Arc<dyn AuditSink>>,
+}
+
+impl std::fmt::Debug for GuardConfig {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("GuardConfig")
+            .field("cgroup_path", &self.cgroup_path)
+            .field("allow", &self.allow)
+            .field("allow6", &self.allow6)
+            .field("allow_domain", &self.allow_domain)
+            .field("refresh_secs", &self.refresh_secs)
+            .field("admin_socket", &self.admin_socket)
+            .field("audit", &self.audit.is_some())
+            .finish()
+    }
 }
 
 /// Resolve a domain to its IP addresses (best-effort; empty on failure). Both
@@ -193,6 +216,37 @@ fn err_json(msg: &str) -> String {
 /// the cgroup. Egress is enforced from the moment `attach` returns — callers
 /// (`pasu-egress`, `pasu-daemon`, `pasu run`) then [`Guard::hold`] it for as
 /// long as protection should last.
+/// ring buffer 에서 읽은 바이트를 감사 레코드로 옮긴다.
+///
+/// 억제된 건수가 있으면 사유에 함께 적는다 — 커널이 창 안의 반복을 눌렀다는
+/// 사실 자체가 운영 정보다.
+fn record_drop(sink: &dyn AuditSink, ev: &DropEvent) {
+    let host = match ev.family {
+        4 => Ipv4Addr::new(ev.addr[0], ev.addr[1], ev.addr[2], ev.addr[3]).to_string(),
+        6 => Ipv6Addr::from(ev.addr).to_string(),
+        other => format!("unknown-family-{other}"),
+    };
+    let reason = if ev.suppressed > 0 {
+        format!(
+            "kernel egress drop (not in allowlist); {} more suppressed in the last window",
+            ev.suppressed
+        )
+    } else {
+        "kernel egress drop (not in allowlist)".to_string()
+    };
+    let event = Event {
+        kind: EventKind::Egress {
+            host,
+            port: ev.port,
+        },
+    };
+    sink.record(&AuditRecord::new(
+        "ebpf-egress",
+        &event,
+        &Verdict::Deny(reason),
+    ));
+}
+
 pub struct Guard {
     ebpf: aya::Ebpf,
     cfg: GuardConfig,
@@ -288,9 +342,67 @@ impl Guard {
         let mut interval = tokio::time::interval(Duration::from_secs(self.cfg.refresh_secs));
         interval.tick().await; // consume the immediate first tick
         let refreshing = !self.cfg.allow_domain.is_empty();
+
+        // 커널이 올리는 드롭 이벤트를 감사로 흘린다. sink 가 없으면 맵을
+        // 열지 않는다 — 기존 동작(조용한 차단) 그대로다.
+        //
+        // ring buffer 는 읽을 것이 있을 때만 readable 이 되므로 AsyncFd 로 감싸
+        // select 안에 둔다. 여기서 실패해도 차단에는 영향이 없다 — 기록을
+        // 잃을지언정 통과시키지 않는다.
+        //
+        // sink 와 fd 를 따로 두는 이유: select 안에서 fd 를 가변 대여하는 동안
+        // 같은 변수를 다시 대여할 수 없다.
+        let audit = self.cfg.audit.clone();
+        let mut drops = match &audit {
+            Some(_) => match self.ebpf.take_map("DROPS") {
+                Some(map) => match RingBuf::try_from(map) {
+                    Ok(rb) => match tokio::io::unix::AsyncFd::new(rb) {
+                        Ok(fd) => Some(fd),
+                        Err(e) => {
+                            warn!("kernel drop audit disabled (async fd): {e}");
+                            None
+                        }
+                    },
+                    Err(e) => {
+                        warn!("kernel drop audit disabled (ring buffer): {e}");
+                        None
+                    }
+                },
+                None => {
+                    warn!("kernel drop audit disabled: DROPS map not found");
+                    None
+                }
+            },
+            None => None,
+        };
+
         tokio::pin!(shutdown);
         loop {
             tokio::select! {
+                // 드롭 이벤트 배치를 읽어 감사로 남긴다.
+                ready = async {
+                    match drops.as_mut() {
+                        Some(fd) => fd.readable_mut().await.ok(),
+                        // sink 가 없으면 이 갈래는 영원히 대기한다.
+                        None => std::future::pending().await,
+                    }
+                }, if drops.is_some() => {
+                    if let (Some(mut guard), Some(sink)) = (ready, audit.as_ref()) {
+                        let rb = guard.get_inner_mut();
+                        while let Some(item) = rb.next() {
+                            if item.len() >= core::mem::size_of::<DropEvent>() {
+                                // SAFETY: 길이를 확인했고 DropEvent 는 repr(C) Pod 이라
+                                // 커널이 쓴 바이트를 그대로 읽어도 된다. 정렬은
+                                // read_unaligned 가 처리한다.
+                                let ev: DropEvent = unsafe {
+                                    core::ptr::read_unaligned(item.as_ptr().cast())
+                                };
+                                record_drop(sink.as_ref(), &ev);
+                            }
+                        }
+                        guard.clear_ready();
+                    }
+                }
                 _ = interval.tick(), if refreshing => {
                     if let Err(e) = refresh_domains(&mut self.ebpf, &self.cfg.allow_domain).await {
                         warn!("domain refresh failed: {e}");

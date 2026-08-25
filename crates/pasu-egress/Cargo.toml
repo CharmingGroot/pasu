@@ -6,6 +6,7 @@ edition = "2024"
 license.workspace = true
 
 [dependencies]
+pasu-audit = { path = "../pasu-audit" }
 pasu-core = { path = "../pasu-core" }
 pasu-ebpf-common = { path = "../pasu-ebpf-common", features = ["user"] }
 
