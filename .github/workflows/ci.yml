@@ -42,8 +42,13 @@ jobs:
       - uses: dtolnay/rust-toolchain@nightly
         with:
           components: rust-src
+      # 버전을 고정한다. bpf-linker 0.11.0(2026-08-12)부터 시스템 LLVM(llvm-sys
+      # 21~23)을 요구하는데, LLVM 21을 깔아도 0.11이 그보다 최신 API
+      # (LLVMParseIRInContext2)를 참조해 링크가 깨진다. 0.10.4 는 러너 기본
+      # 환경에서 그대로 빌드된다. 0.11 이상으로 올리려면 맞는 LLVM 버전을
+      # 함께 확정해야 하며, 이는 별건으로 다룬다.
       - name: install bpf-linker
-        run: cargo install bpf-linker --locked
+        run: cargo install bpf-linker --locked --version 0.10.4
       - uses: Swatinem/rust-cache@v2
       # builds the eBPF program (aya-build) and runs control-plane unit tests
       # (EgressLayer, daemon policy lowering); the cgroup E2E runs in the
@@ -62,8 +67,13 @@ jobs:
       - uses: dtolnay/rust-toolchain@nightly
         with:
           components: rust-src
+      # 버전을 고정한다. bpf-linker 0.11.0(2026-08-12)부터 시스템 LLVM(llvm-sys
+      # 21~23)을 요구하는데, LLVM 21을 깔아도 0.11이 그보다 최신 API
+      # (LLVMParseIRInContext2)를 참조해 링크가 깨진다. 0.10.4 는 러너 기본
+      # 환경에서 그대로 빌드된다. 0.11 이상으로 올리려면 맞는 LLVM 버전을
+      # 함께 확정해야 하며, 이는 별건으로 다룬다.
       - name: install bpf-linker
-        run: cargo install bpf-linker --locked
+        run: cargo install bpf-linker --locked --version 0.10.4
       - uses: Swatinem/rust-cache@v2
       - name: build E2E binaries
         run: |
