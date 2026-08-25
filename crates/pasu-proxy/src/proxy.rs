@@ -22,9 +22,13 @@ use crate::stream::{extract_stream, is_event_stream};
 /// Shared proxy state: the guard (policy + HITL + audit), an HTTP client, the
 /// upstream provider base URL, and which wire format to parse.
 pub struct ProxyState<E: RuleEngine, A: Approver> {
+    /// Judges each parsed tool call.
     pub guard: Guard<E, A>,
+    /// Client used to forward to the upstream provider.
     pub client: reqwest::Client,
+    /// Upstream base URL, e.g. `https://api.openai.com`.
     pub upstream_base: String,
+    /// Wire format to parse responses as.
     pub provider: Provider,
 }
 

@@ -17,6 +17,10 @@
 //!
 //! [`Guard`]: pasu_core::Guard
 
+// 이 crate 에는 unsafe 가 필요 없다. 선언해 두면 향후 유입을 컴파일 타임에 막는다.
+#![forbid(unsafe_code)]
+// 공개 API 문서 누락을 조용히 통과시키지 않는다(crates.io 배포 대상).
+#![warn(missing_docs)]
 pub mod inspect;
 pub mod parse;
 pub mod proxy;

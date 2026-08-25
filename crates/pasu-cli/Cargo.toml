@@ -4,6 +4,7 @@ version = "0.1.0"
 edition = "2024"
 
 license.workspace = true
+rust-version.workspace = true
 
 # The product CLI ("pasu"): wrap ANY agent command in the kernel guard with one
 # command. Like pasu-daemon it is a composition root, so it may depend on the

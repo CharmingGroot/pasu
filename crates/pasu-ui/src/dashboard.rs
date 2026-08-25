@@ -27,16 +27,22 @@ pub struct EgressAdmin {
 /// Live status reported by the guard (mirrors pasu-egress `admin::Status`).
 #[derive(Debug, Deserialize)]
 pub struct EgressStatus {
+    /// cgroup the guard is attached to.
     pub cgroup_path: String,
+    /// Whether the eBPF program is currently attached.
     pub attached: bool,
+    /// How often allowed domains are re-resolved.
     pub refresh_secs: u64,
+    /// Addresses currently in the kernel allowlist.
     #[serde(default)]
     pub allow_ips: Vec<String>,
+    /// Domains resolved into the allowlist.
     #[serde(default)]
     pub allow_domains: Vec<String>,
 }
 
 impl EgressAdmin {
+    /// Talk to the egress guard over its admin socket.
     pub fn new(socket: impl Into<PathBuf>) -> Self {
         Self {
             socket: socket.into(),
@@ -61,15 +67,18 @@ impl EgressAdmin {
         Ok(resp.trim().to_string())
     }
 
+    /// Read the guard's current state (attach point, allowlist).
     pub async fn status(&self) -> Result<EgressStatus, String> {
         let json = self.request("status").await?;
         serde_json::from_str(&json).map_err(|e| format!("bad status reply: {e}"))
     }
 
+    /// Add an address to the kernel allowlist, live.
     pub async fn allow(&self, ip: &str) -> Result<(), String> {
         ok_reply(self.request(&format!("allow {ip}")).await?)
     }
 
+    /// Remove an address from the kernel allowlist, live.
     pub async fn deny(&self, ip: &str) -> Result<(), String> {
         ok_reply(self.request(&format!("deny {ip}")).await?)
     }
@@ -97,6 +106,9 @@ pub struct EgressUi {
 }
 
 impl EgressUi {
+    /// Mount the egress dashboard against a guard's admin socket.
+    /// `policy_path`, when given, is shown read-only next to the live allowlist.
+    #[must_use]
     pub fn new(admin: EgressAdmin, policy_path: Option<PathBuf>) -> Self {
         Self { admin, policy_path }
     }
