@@ -1,7 +1,12 @@
 name: release
 
-# Build and publish the multi-arch pasu images to GHCR on version tags:
-# pasu-egress (kernel eBPF guard) and pasu-proxy (unprivileged LLM-API guard).
+# 버전 태그에서 GHCR 로 멀티아치 이미지를 올린다:
+# pasu-egress(커널 eBPF 가드), pasu-proxy(무권한 LLM-API 가드).
+#
+# 아키텍처마다 **네이티브 러너**에서 빌드한 뒤 manifest 로 합친다.
+# QEMU 에뮬레이션으로 arm64 를 빌드하면 eBPF 이미지가 bpf-linker 를 소스에서
+# 컴파일하느라 특히 느리다(v0.1.0 실측: proxy 31분 / egress 39분).
+# public 레포는 ubuntu-24.04-arm 러너를 무료로 쓸 수 있다.
 on:
   push:
     tags: ["v*"]
@@ -10,40 +15,120 @@ permissions:
   contents: read
   packages: write
 
+env:
+  REGISTRY: ghcr.io
+
 jobs:
-  image:
-    name: ghcr ${{ matrix.image }} (amd64 + arm64)
-    runs-on: ubuntu-latest
+  build:
+    name: ${{ matrix.image }} · ${{ matrix.arch }}
+    runs-on: ${{ matrix.runner }}
     strategy:
       fail-fast: false
+      # include 병합 규칙이 헷갈리기 쉬워 조합을 그대로 적는다.
       matrix:
         include:
           - image: pasu-egress
             dockerfile: deploy/Dockerfile
+            arch: amd64
+            runner: ubuntu-latest
+          - image: pasu-egress
+            dockerfile: deploy/Dockerfile
+            arch: arm64
+            runner: ubuntu-24.04-arm
           - image: pasu-proxy
             dockerfile: deploy/proxy/Dockerfile
+            arch: amd64
+            runner: ubuntu-latest
+          - image: pasu-proxy
+            dockerfile: deploy/proxy/Dockerfile
+            arch: arm64
+            runner: ubuntu-24.04-arm
     steps:
       - uses: actions/checkout@v4
-      - uses: docker/setup-qemu-action@v3
       - uses: docker/setup-buildx-action@v3
       - uses: docker/login-action@v3
         with:
-          registry: ghcr.io
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      # 태그 없이 digest 로만 올린다. 아키텍처별 이미지에 사람이 쓰는 태그를
+      # 붙이면 나중에 올라온 쪽이 앞의 것을 덮어쓴다.
+      - name: build + push (by digest)
+        id: build
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: ${{ matrix.dockerfile }}
+          platforms: linux/${{ matrix.arch }}
+          push: true
+          provenance: false
+          outputs: type=image,name=${{ env.REGISTRY }}/${{ github.repository_owner }}/${{ matrix.image }},push-by-digest=true,name-canonical=true
+          cache-from: type=gha,scope=${{ matrix.image }}-${{ matrix.arch }}
+          cache-to: type=gha,mode=max,scope=${{ matrix.image }}-${{ matrix.arch }}
+
+      # digest 를 파일로 남겨 merge 잡에 넘긴다(매트릭스 출력은 잡마다 덮어써진다).
+      # 파일 이름에 digest 를 담아 merge 잡으로 넘긴다.
+      # (매트릭스 잡의 outputs 는 서로 덮어써서 쓸 수 없다.)
+      - name: export digest
+        env:
+          DIGEST: ${{ steps.build.outputs.digest }}
+        run: |
+          set -euo pipefail
+          mkdir -p /tmp/digests
+          touch "/tmp/digests/${{ matrix.image }}@${DIGEST#sha256:}"
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: digest-${{ matrix.image }}-${{ matrix.arch }}
+          path: /tmp/digests/*
+          retention-days: 1
+          if-no-files-found: error
+
+  merge:
+    name: manifest 병합 · ${{ matrix.image }}
+    needs: build
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        image: [pasu-egress, pasu-proxy]
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: digest-${{ matrix.image }}-*
+          path: /tmp/digests
+          merge-multiple: true
+      - uses: docker/setup-buildx-action@v3
+      - uses: docker/login-action@v3
+        with:
+          registry: ${{ env.REGISTRY }}
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
       - uses: docker/metadata-action@v5
         id: meta
         with:
-          images: ghcr.io/${{ github.repository_owner }}/${{ matrix.image }}
+          images: ${{ env.REGISTRY }}/${{ github.repository_owner }}/${{ matrix.image }}
           tags: |
             type=semver,pattern={{version}}
             type=semver,pattern={{major}}.{{minor}}
             type=sha
-      - uses: docker/build-push-action@v6
-        with:
-          context: .
-          file: ${{ matrix.dockerfile }}
-          platforms: linux/amd64,linux/arm64
-          push: true
-          tags: ${{ steps.meta.outputs.tags }}
-          labels: ${{ steps.meta.outputs.labels }}
+
+      # 아키텍처별 digest 를 하나의 멀티아치 태그로 묶는다.
+      - name: create manifest list
+        working-directory: /tmp/digests
+        run: |
+          set -euo pipefail
+          refs=""
+          for f in *; do
+            digest="${f##*@}"
+            refs="$refs ${REGISTRY}/${{ github.repository_owner }}/${{ matrix.image }}@sha256:${digest}"
+          done
+          echo "합칠 이미지:$refs"
+          docker buildx imagetools create \
+            $(jq -cr '.tags | map("-t " + .) | join(" ")' <<< "$DOCKER_METADATA_OUTPUT_JSON") \
+            $refs
+
+      - name: verify
+        run: |
+          docker buildx imagetools inspect \
+            "${REGISTRY}/${{ github.repository_owner }}/${{ matrix.image }}:${{ steps.meta.outputs.version }}"

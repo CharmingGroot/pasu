@@ -6,6 +6,14 @@ All notable changes to pasu are documented here. The format follows
 
 ## [Unreleased]
 
+### Changed
+- **Release images build on native runners.** Each architecture is built on its
+  own runner (`ubuntu-latest` for amd64, `ubuntu-24.04-arm` for arm64) and the
+  results are stitched into one multi-arch tag by digest. Previously arm64 was
+  emulated with QEMU, which was slow enough to matter — the v0.1.0 release took
+  31 minutes for `pasu-proxy` and 39 for `pasu-egress`, most of it spent
+  compiling `bpf-linker` from source under emulation.
+
 ### Added
 - **`pasu-pii-kr` — Korean PII blocking filter** (new crate). Detects resident
   registration numbers, business registration numbers, card numbers and mobile
