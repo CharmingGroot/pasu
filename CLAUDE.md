@@ -105,6 +105,10 @@ merge A first. Do **not** `--delete-branch` a branch another PR is based on.
 - Early returns (no deep nesting), no needless mutation, fully typed (avoid coarse types), composition over inheritance.
 - Minimal comments — aim for self-evident code. Magic numbers/strings go in `constants`.
 - No `unwrap` / `expect` / `panic` on user/network input paths. Model failures as values (`Result`).
+- **Stay within the declared MSRV.** Clippy suggests APIs newer than it (e.g.
+  `is_multiple_of`); a local toolchain accepts them and the `msrv` CI job then
+  fails. When that happens, keep the older form and silence the lint with a
+  one-line reason — do not raise the MSRV to satisfy a style lint.
 
 ### 7. Platform
 
