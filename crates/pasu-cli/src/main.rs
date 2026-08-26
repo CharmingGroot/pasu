@@ -103,6 +103,11 @@ fn spawn_in_cgroup(
     let procs = cgroup.join("cgroup.procs");
     let mut cmd = std::process::Command::new(&command[0]);
     cmd.args(&command[1..]);
+    // SAFETY: pre_exec 의 클로저는 fork 와 exec 사이에서 돌므로 async-signal-safe
+    // 해야 한다. 여기서 하는 일은 getpid 와 이미 열려 있는 경로에 대한 write 뿐이고,
+    // 힙 할당이나 락을 잡지 않는다. 자식이 스스로 cgroup 에 들어가야 하는 이유는
+    // 부모가 넣으면 그 사이에 자식이 egress 를 낼 수 있기 때문이다(경합).
+    #[allow(unsafe_code)]
     unsafe {
         cmd.pre_exec(move || {
             let pid = libc::getpid().to_string();
