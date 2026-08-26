@@ -326,15 +326,40 @@ impl Guard {
     }
 }
 
-/// Load, populate, attach, optionally serve admin, and hold until Ctrl-C.
+/// Load, populate, attach, optionally serve admin, and hold until a shutdown signal.
 pub async fn run(cfg: GuardConfig) -> anyhow::Result<()> {
     let guard = Guard::attach(cfg).await?;
-    println!("Waiting for Ctrl-C...");
-    guard
-        .hold(async {
-            let _ = signal::ctrl_c().await;
-        })
-        .await?;
+    println!("Waiting for SIGINT/SIGTERM...");
+    guard.hold(shutdown_signal()).await?;
     println!("Exiting...");
     Ok(())
+}
+
+/// Wait for SIGINT (Ctrl-C) or SIGTERM, whichever comes first.
+///
+/// Containers and systemd send **SIGTERM**, then SIGKILL after a grace period.
+/// Waiting only on SIGINT means the eBPF program is never detached through the
+/// normal path — the guard is killed with the cgroup program still attached.
+async fn shutdown_signal() {
+    let ctrl_c = async {
+        let _ = signal::ctrl_c().await;
+    };
+
+    #[cfg(unix)]
+    let terminate = async {
+        match signal::unix::signal(signal::unix::SignalKind::terminate()) {
+            Ok(mut s) => {
+                s.recv().await;
+            }
+            Err(_) => std::future::pending::<()>().await,
+        }
+    };
+
+    #[cfg(not(unix))]
+    let terminate = std::future::pending::<()>();
+
+    tokio::select! {
+        () = ctrl_c => {}
+        () = terminate => {}
+    }
 }
