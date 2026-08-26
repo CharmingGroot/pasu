@@ -113,7 +113,10 @@ async fn ask_is_held_then_approved_and_the_call_proceeds() {
     );
 
     // 사람이 승인한다.
-    assert!(approvals.decide(id, true), "대기 중인 id 를 해소할 수 있어야 한다");
+    assert!(
+        approvals.decide(id, true),
+        "대기 중인 id 를 해소할 수 있어야 한다"
+    );
 
     // 승인 뒤에야 응답이 나오고, 통과한다.
     let resp = pending_req
@@ -125,7 +128,10 @@ async fn ask_is_held_then_approved_and_the_call_proceeds() {
         StatusCode::OK,
         "승인했으므로 업스트림 응답이 그대로 전달되어야 한다"
     );
-    assert!(approvals.list().is_empty(), "해소된 항목은 대기열에서 빠진다");
+    assert!(
+        approvals.list().is_empty(),
+        "해소된 항목은 대기열에서 빠진다"
+    );
 }
 
 #[tokio::test]
