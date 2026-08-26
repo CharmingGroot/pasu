@@ -1,0 +1,13 @@
+name: 사업자등록번호
+cases:
+  - text: "사업자번호 220-81-62517 입니다"     # 체크섬 유효
+    expect: deny
+    rule: ko-brn
+  - text: "2208162517"
+    expect: deny
+    rule: ko-brn
+  # 체크섬이 틀리면 통과 — 정규식만 쓰면 여기서 오탐이 난다
+  - text: "임의의 열 자리 1234567890 은 사업자번호가 아니다"
+    expect: allow
+  - text: "123-45-67890"
+    expect: allow
