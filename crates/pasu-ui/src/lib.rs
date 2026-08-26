@@ -8,6 +8,10 @@
 //! binary (axum). The egress observability dashboard (roadmap M6) plugs in later
 //! on top of the observability stream (M5). Design: roadmap.md
 
+// 이 crate 에는 unsafe 가 필요 없다. 선언해 두면 향후 유입을 컴파일 타임에 막는다.
+#![forbid(unsafe_code)]
+// 공개 API 문서 누락을 조용히 통과시키지 않는다(crates.io 배포 대상).
+#![warn(missing_docs)]
 pub mod dashboard;
 pub mod shutdown;
 
@@ -103,6 +107,9 @@ impl Default for UiApprover {
 }
 
 impl UiApprover {
+    /// Approver that parks `Ask` verdicts until a browser decides, with the
+    /// default timeout. Timing out denies (fail-closed).
+    #[must_use]
     pub fn new() -> Self {
         Self {
             state: AppState::default(),
@@ -110,6 +117,8 @@ impl UiApprover {
         }
     }
 
+    /// Same as [`UiApprover::new`] with a custom wait before failing closed.
+    #[must_use]
     pub fn with_timeout(timeout: Duration) -> Self {
         Self {
             state: AppState::default(),

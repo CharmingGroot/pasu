@@ -90,6 +90,18 @@ jobs:
             PASU_E2E_KERNEL=1 \
             cargo test -p pasu-cli --test run_e2e -- --test-threads=1 --nocapture
 
+  msrv:
+    name: MSRV (1.86) 빌드
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      # 선언한 MSRV 로 실제 빌드되는지 확인한다. 선언만 하고 검사하지 않으면
+      # 새 문법이 슬금슬금 들어와 사용자 툴체인에서만 깨진다.
+      - uses: dtolnay/rust-toolchain@1.86.0
+      - uses: Swatinem/rust-cache@v2
+      - name: build (포터블 crate)
+        run: cargo build --locked
+
   supply-chain:
     name: cargo-deny (advisories · licenses · sources)
     runs-on: ubuntu-latest

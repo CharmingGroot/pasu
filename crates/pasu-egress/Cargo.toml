@@ -4,6 +4,7 @@ version = "0.1.0"
 edition = "2024"
 
 license.workspace = true
+rust-version.workspace = true
 
 [dependencies]
 pasu-audit = { path = "../pasu-audit" }

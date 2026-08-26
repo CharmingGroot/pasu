@@ -24,7 +24,11 @@ pub fn is_valid(s: &str) -> bool {
             v
         })
         .sum();
-    sum.is_multiple_of(10)
+    // is_multiple_of 는 MSRV(1.86)에 없다.
+    #[allow(clippy::manual_is_multiple_of)]
+    {
+        sum % 10 == 0
+    }
 }
 
 #[cfg(test)]

@@ -11,6 +11,11 @@
 //! INSIDE that cgroup, and enforces until it exits. Fail-closed: if the guard
 //! cannot attach, the command never starts.
 
+// 기본은 unsafe 금지. 다만 자식을 전용 cgroup 에 넣으려면 pre_exec 가 필요하고
+// 그것은 본질적으로 unsafe 다(fork 와 exec 사이에서 돌기 때문). forbid 는 국소
+// 예외를 허용하지 않으므로 deny 를 쓰고, 그 한 곳만 명시적으로 열어 둔다.
+#![deny(unsafe_code)]
+
 use pasu_audit::JsonlSink;
 use std::os::unix::process::{CommandExt as _, ExitStatusExt as _};
 use std::path::PathBuf;
@@ -98,6 +103,11 @@ fn spawn_in_cgroup(
     let procs = cgroup.join("cgroup.procs");
     let mut cmd = std::process::Command::new(&command[0]);
     cmd.args(&command[1..]);
+    // SAFETY: pre_exec 의 클로저는 fork 와 exec 사이에서 돌므로 async-signal-safe
+    // 해야 한다. 여기서 하는 일은 getpid 와 이미 열려 있는 경로에 대한 write 뿐이고,
+    // 힙 할당이나 락을 잡지 않는다. 자식이 스스로 cgroup 에 들어가야 하는 이유는
+    // 부모가 넣으면 그 사이에 자식이 egress 를 낼 수 있기 때문이다(경합).
+    #[allow(unsafe_code)]
     unsafe {
         cmd.pre_exec(move || {
             let pid = libc::getpid().to_string();

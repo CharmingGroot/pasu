@@ -10,6 +10,7 @@ use serde::Deserialize;
 /// A tool call a model proposed, extracted from a provider response.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ToolCall {
+    /// Tool name as the model asked for it.
     pub name: String,
     /// Arguments as a JSON string. OpenAI emits a string already; Anthropic and
     /// Gemini emit a JSON object, which we serialize so the guard sees one shape.

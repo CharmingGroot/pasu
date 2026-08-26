@@ -25,6 +25,16 @@ default-members = [
 
 [workspace.package]
 edition = "2021"
+# MSRV. 올릴 때는 CHANGELOG 에 적고 CI 의 msrv 잡도 함께 올린다.
+# 사용자 툴체인이 이보다 낮으면 알 수 없는 컴파일 에러 대신 명확한 안내가 나온다.
+#
+# 1.86 인 이유는 두 겹이다.
+#   - eBPF 계열(pasu-ebpf, pasu-ebpf-common)이 edition 2024 를 쓰고, edition 2024
+#     자체가 1.85 이상을 요구한다.
+#   - rustls 가 끌고 오는 icu_* 계열이 1.86 을 요구한다(CI 의 msrv 잡이 잡아냈다).
+# 즉 실효 하한은 의존성이 정한다. 값만 선언하고 검사하지 않으면 이런 어긋남을
+# 사용자 환경에서야 알게 되므로, CI 에 해당 툴체인 빌드 잡을 둔다.
+rust-version = "1.86"
 license = "Apache-2.0"
 repository = "https://github.com/CharmingGroot/pasu"
 
