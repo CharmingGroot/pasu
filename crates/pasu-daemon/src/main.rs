@@ -6,8 +6,11 @@
 //! stay enforced at the hook layer — the kernel remains default-deny, so the
 //! lowering can only be narrower than the policy, never wider.
 
+// 이 crate 에는 unsafe 가 필요 없다. 선언해 두면 향후 유입을 컴파일 타임에 막는다.
+#![forbid(unsafe_code)]
 use anyhow::Context as _;
 use clap::Parser;
+use pasu_audit::JsonlSink;
 use pasu_egress::guard::{self, GuardConfig};
 use pasu_rules::Ruleset;
 
@@ -90,6 +93,7 @@ fn load(opt: Opt) -> anyhow::Result<GuardConfig> {
         allow_domain: allowlist.domains,
         refresh_secs: opt.refresh_secs,
         admin_socket: opt.admin_socket,
+        audit: Some(std::sync::Arc::new(JsonlSink::new(std::io::stderr()))),
     })
 }
 

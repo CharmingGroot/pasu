@@ -1,0 +1,40 @@
+# 언어 중립 테스트 명세.
+# 다른 언어로 구현하더라도 이 코퍼스를 그대로 통과해야 한다.
+name: 주민등록번호
+cases:
+  # ── TP: 차단되어야 한다 ──
+  - text: "고객 주민번호는 900101-1234567 입니다"
+    expect: deny
+    rule: ko-rrn
+  - text: "9001011234567 로 조회해줘"
+    expect: deny
+    rule: ko-rrn
+  - text: "주민번호 900101 1234567 확인"
+    expect: deny
+    rule: ko-rrn
+  - text: "2000년생 000229-3234567"    # 2000년은 윤년
+    expect: deny
+    rule: ko-rrn
+  # 회귀: 한글 바로 뒤에 붙여 쓴 경우. 유니코드 \b 로는 놓친다.
+  - text: "주민번호900101-1234567"
+    expect: deny
+    rule: ko-rrn
+  - text: "번호:900101-1234567입니다"
+    expect: deny
+    rule: ko-rrn
+
+  # ── TN: 통과해야 한다 ──
+  - text: "오늘 서울 날씨 알려줘"
+    expect: allow
+  - text: "13월은 없다: 901301-1234567"
+    expect: allow
+  - text: "32일도 없다: 900132-1234567"
+    expect: allow
+  - text: "1990년 2월 29일은 없다: 900229-1234567"
+    expect: allow
+  - text: "성별코드가 9면 후보가 아니다: 900101-9234567"
+    expect: allow
+  - text: "자리수가 모자라면 아니다: 900101-123456"
+    expect: allow
+  - text: "주문번호 20260819-0001 입니다"
+    expect: allow

@@ -10,6 +10,10 @@
 //! the trait's callers (pasu-proxy, pasu-egress) decoupled from the rule format —
 //! swap this for OPA / a DSL later without touching them. Design: docs/rules.md
 
+// 이 crate 에는 unsafe 가 필요 없다. 선언해 두면 향후 유입을 컴파일 타임에 막는다.
+#![forbid(unsafe_code)]
+// 공개 API 문서 누락을 조용히 통과시키지 않는다(crates.io 배포 대상).
+#![warn(missing_docs)]
 use std::net::{Ipv4Addr, Ipv6Addr};
 use std::path::{Path, PathBuf};
 
@@ -20,8 +24,11 @@ use serde::Deserialize;
 #[derive(Debug, Clone, Copy, Deserialize)]
 #[serde(rename_all = "lowercase")]
 pub enum Action {
+    /// Let it through.
     Allow,
+    /// Block it.
     Deny,
+    /// Hold for human approval.
     Ask,
 }
 
@@ -30,8 +37,10 @@ pub enum Action {
 /// leading-dot suffix like `.openai.com` for domain matching).
 #[derive(Debug, Clone, Default, Deserialize)]
 pub struct Match {
+    /// Matches a tool call's name (exact).
     #[serde(default)]
     pub tool: Option<String>,
+    /// Matches an egress host: exact, or a leading-dot suffix (`.openai.com`).
     #[serde(default)]
     pub host: Option<String>,
 }
@@ -39,10 +48,14 @@ pub struct Match {
 /// A single rule: name + match + action (+ optional human-readable reason).
 #[derive(Debug, Clone, Deserialize)]
 pub struct Rule {
+    /// Rule name. Appears in verdicts and audit records.
     pub name: String,
+    /// What this rule matches.
     #[serde(rename = "match")]
     pub matcher: Match,
+    /// What to do on a match.
     pub action: Action,
+    /// Human-readable reason, surfaced with the verdict.
     #[serde(default)]
     pub reason: Option<String>,
 }
@@ -54,6 +67,7 @@ fn default_action() -> Action {
 /// An ordered ruleset plus the default action for unmatched events.
 #[derive(Debug, Clone, Deserialize)]
 pub struct Ruleset {
+    /// Rules in declaration order. First match wins.
     #[serde(default)]
     pub rules: Vec<Rule>,
     /// Action when no rule matches. Defaults to `deny` (fail-closed).
@@ -81,7 +95,9 @@ pub struct EgressAllowlist {
 /// An allow rule that could not be lowered to the kernel layer.
 #[derive(Debug, PartialEq)]
 pub struct SkippedRule {
+    /// Name of the rule that could not be lowered.
     pub rule: String,
+    /// Why it could not be lowered.
     pub reason: String,
 }
 
@@ -254,6 +270,8 @@ pub struct RulesetEngine {
 }
 
 impl RulesetEngine {
+    /// Wrap a ruleset as an engine.
+    #[must_use]
     pub fn new(ruleset: Ruleset) -> Self {
         Self { ruleset }
     }

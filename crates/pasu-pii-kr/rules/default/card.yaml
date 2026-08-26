@@ -1,0 +1,5 @@
+rules:
+  - id: card
+    pattern: '(?-u)\b(?:[0-9]{4}[-\s]?){3}[0-9]{4}\b'
+    validator: luhn
+    action: deny

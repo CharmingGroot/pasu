@@ -4,6 +4,13 @@
 //! crate depends on nothing (pure); other crates depend only on core (acyclic).
 //! Design: docs/repo-structure.md
 
+// 프로덕션 빌드에는 unsafe 가 필요 없다. 선언해 두면 향후 유입을 컴파일 타임에 막는다.
+// 테스트에서만 예외인 이유: Approver 퓨처를 런타임 없이 폴링하려고 수동 Waker 를
+// 만드는데, 여기에 unsafe 가 불가피하다. forbid 는 국소 예외를 허용하지 않으므로
+// not(test) 로 범위를 좁힌다.
+#![cfg_attr(not(test), forbid(unsafe_code))]
+// 공개 API 문서 누락을 조용히 통과시키지 않는다(crates.io 배포 대상).
+#![warn(missing_docs)]
 use serde::Serialize;
 
 /// A policy decision.
@@ -20,27 +27,43 @@ pub enum Verdict {
 /// An action the agent wants to take. Layers evaluate this event.
 #[derive(Debug, Clone)]
 pub struct Event {
+    /// 무엇을 하려는 행동인지.
     pub kind: EventKind,
 }
 
+/// The kind of action, with the fields each layer needs to judge it.
 #[derive(Debug, Clone)]
 pub enum EventKind {
     /// LLM-API proxy (parsed tool_call) — a tool call.
-    ToolCall { name: String, input: String },
+    ToolCall {
+        /// Tool name as the model asked for it.
+        name: String,
+        /// Raw arguments, serialized as a JSON string.
+        input: String,
+    },
     /// eBPF / proxy — outbound network.
-    Egress { host: String, port: u16 },
+    Egress {
+        /// Destination host (or literal address).
+        host: String,
+        /// Destination port.
+        port: u16,
+    },
 }
 
 /// Rule engine interface. The initial implementation borrows Falco rules
 /// (pasu-rules). Swappable later for OPA / a custom DSL — callers see only this trait.
 pub trait RuleEngine {
+    /// Judge one event against the ruleset.
     fn evaluate(&self, event: &Event) -> Verdict;
 }
 
 /// Common interface for layers (LLM-API proxy / egress / eBPF). Runtime-toggleable.
 pub trait Layer {
+    /// Layer name, as it appears in audit records.
     fn name(&self) -> &str;
+    /// Whether this layer is active. A disabled layer allows everything.
     fn enabled(&self) -> bool;
+    /// Evaluate an event in this layer.
     fn check(&self, event: &Event) -> Verdict;
 }
 
@@ -51,6 +74,7 @@ pub trait Layer {
 /// Lives in core so both the LLM-API proxy (pasu-proxy) and UI-backed approvers
 /// (pasu-ui) implement the same trait.
 pub trait Approver: Send + Sync {
+    /// Ask a human. `true` allows the action; anything else must deny.
     fn approve(&self, reason: &str) -> impl core::future::Future<Output = bool> + Send;
 }
 
@@ -67,8 +91,11 @@ impl Approver for DenyAll {
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "lowercase")]
 pub enum VerdictKind {
+    /// Allowed.
     Allow,
+    /// Blocked.
     Deny,
+    /// Held for human approval.
     Ask,
 }
 
@@ -110,6 +137,7 @@ impl AuditRecord {
 /// Sink for audit records — stderr (JSONL), a channel, a file, etc. Kept in core
 /// so any layer can emit without depending on a concrete sink implementation.
 pub trait AuditSink: Send + Sync {
+    /// Write one decision. Must not block the guard path.
     fn record(&self, record: &AuditRecord);
 }
 
@@ -166,6 +194,7 @@ impl<E: RuleEngine, A: Approver> Guard<E, A> {
         self.enabled = enabled;
     }
 
+    /// Whether the guard is active. A disabled guard allows everything.
     pub fn enabled(&self) -> bool {
         self.enabled
     }

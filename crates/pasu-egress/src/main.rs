@@ -1,3 +1,4 @@
+use pasu_audit::JsonlSink;
 use std::net::{IpAddr, Ipv4Addr, Ipv6Addr};
 
 use anyhow::Context as _;
@@ -88,6 +89,9 @@ impl From<Config> for GuardConfig {
             allow_domain: cfg.allow_domain,
             refresh_secs: cfg.refresh_secs,
             admin_socket: cfg.admin_socket,
+            // 커널이 막은 것을 기록으로 남긴다. 어떤 로그 파이프라인이든
+            // 받을 수 있도록 stderr JSONL 로 낸다.
+            audit: Some(std::sync::Arc::new(JsonlSink::new(std::io::stderr()))),
         }
     }
 }

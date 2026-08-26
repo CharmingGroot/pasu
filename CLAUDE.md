@@ -30,6 +30,11 @@ Two layers:
 | LLM-API proxy | provider-API boundary (cooperative) | tool-call gate + HITL by parsing provider responses; framework-agnostic | `pasu-proxy` |
 | eBPF egress | kernel (enforcing) | `connect()` / cgroup egress block — unbypassable | `pasu-egress` + `pasu-ebpf` |
 
+Companion crate **`pasu-pii-kr`** blocks Korean PII in text bound for an LLM. It
+depends on no other pasu crate (standalone by design); its working rules and
+domain notes live in [crates/pasu-pii-kr/README.md](crates/pasu-pii-kr/README.md),
+and it is checked by its own pipeline `.github/workflows/pii.yml`.
+
 The proxy filters tool-call intent first; egress that bypasses it (e.g. a tool's own network code) is stopped at the kernel.
 
 Detailed design lives in `docs/` (positioning · architecture · repo-structure · rules · testing; in progress).
@@ -100,6 +105,10 @@ merge A first. Do **not** `--delete-branch` a branch another PR is based on.
 - Early returns (no deep nesting), no needless mutation, fully typed (avoid coarse types), composition over inheritance.
 - Minimal comments — aim for self-evident code. Magic numbers/strings go in `constants`.
 - No `unwrap` / `expect` / `panic` on user/network input paths. Model failures as values (`Result`).
+- **Stay within the declared MSRV.** Clippy suggests APIs newer than it (e.g.
+  `is_multiple_of`); a local toolchain accepts them and the `msrv` CI job then
+  fails. When that happens, keep the older form and silence the lint with a
+  one-line reason — do not raise the MSRV to satisfy a style lint.
 
 ### 7. Platform
 
