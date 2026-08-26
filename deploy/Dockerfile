@@ -3,8 +3,8 @@
 # pasu-egress — kernel eBPF egress guard, containerized.
 #
 # The builder needs nightly + rust-src (aya-build compiles the eBPF object with
-# `-Z build-std`) and a matching LLVM for bpf-linker. The runtime image is a
-# slim Debian with just the loader; the eBPF bytecode is embedded in the binary.
+# `-Z build-std`). The runtime image is a slim Debian with just the loader; the
+# eBPF bytecode is embedded in the binary.
 #
 #   docker build -f deploy/Dockerfile -t pasu-egress:latest .
 #
@@ -18,16 +18,14 @@ FROM docker.io/library/rust:1-bookworm AS builder
 RUN rustup toolchain install nightly --profile minimal --component rust-src \
  && rustup default nightly
 
-# LLVM for bpf-linker. The major must match what bpf-linker expects (21 here);
-# pin this if you pin bpf-linker.
-RUN apt-get update \
- && apt-get install -y --no-install-recommends ca-certificates wget gnupg lsb-release software-properties-common make \
- && wget -qO /tmp/llvm.sh https://apt.llvm.org/llvm.sh \
- && chmod +x /tmp/llvm.sh && /tmp/llvm.sh 21 \
- && ln -sf /usr/bin/llvm-config-21 /usr/bin/llvm-config \
- && rm -rf /var/lib/apt/lists/*
-
-RUN cargo install bpf-linker --locked
+# bpf-linker 는 CI 와 같은 버전으로 고정한다(.github/workflows/ci.yml).
+# 0.11.0(2026-08-12)부터 시스템 LLVM(llvm-sys 21~23)을 요구하는데, 0.10.4 는
+# 그것 없이 빌드된다 — CI 의 eBPF 잡이 LLVM 설치 없이 통과하는 것이 그 증거다.
+#
+# 이전에는 apt.llvm.org 의 llvm.sh 로 LLVM 21 을 깔았으나, 그 스크립트가
+# Debian 12(bookworm) 지원을 끊어 빌드가 깨졌다. 0.10.4 를 쓰는 한 필요 없는
+# 단계라 통째로 걷어냈다. 0.11 이상으로 올릴 때 LLVM 조달 방법을 다시 정한다.
+RUN cargo install bpf-linker --locked --version 0.10.4
 
 WORKDIR /src
 COPY . .
