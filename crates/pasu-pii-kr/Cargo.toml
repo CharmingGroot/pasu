@@ -1,6 +1,6 @@
 [package]
 name = "pasu-pii-kr"
-version = "0.1.0"
+version = "0.2.0"
 description = "한국 개인식별정보(PII)를 탐지해 차단 판정을 내리는 경량 필터. 규칙은 YAML로 관리한다."
 keywords = ["pii", "privacy", "korea", "llm", "filter"]
 categories = ["text-processing"]

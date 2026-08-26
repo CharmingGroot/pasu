@@ -6,7 +6,32 @@ All notable changes to pasu are documented here. The format follows
 
 ## [Unreleased]
 
+## [0.2.0] - 2026-08-26
+
+Hardening release. A cross-cutting audit — walking each concern across every
+crate rather than each crate on its own — found that the enforcing layer kept no
+audit trail, that the proxy had no upstream timeout, and that none of the
+binaries handled SIGTERM. Those are fixed here, along with the metadata that was
+blocking a crates.io publish. One new crate, `pasu-pii-kr`, also lands.
+
+### Breaking
+
+- `GuardConfig` gained an `audit` field. Struct-literal construction needs the
+  new field (pass `None` to keep the previous behaviour, where the kernel blocks
+  silently).
+- **MSRV is now 1.86**, declared and checked in CI.
+
 ### Changed
+- **SIGTERM is handled, and the HTTP servers shut down gracefully.** Containers
+  and systemd send SIGTERM, then SIGKILL after a grace period; waiting only on
+  SIGINT meant the eBPF program was never detached through the normal path. The
+  proxy and UI servers now finish in-flight requests before closing instead of
+  cutting them off.
+- **Lints hold the line that discipline used to.** `forbid(unsafe_code)` on every
+  crate that does not need it (the eBPF stack and one documented `pre_exec` call
+  in `pasu-cli` are the exceptions), `warn(missing_docs)` on the public
+  libraries, and an MSRV job that builds with the declared toolchain. Each of
+  these caught something real while being added.
 - **Release images build on native runners.** Each architecture is built on its
   own runner (`ubuntu-latest` for amd64, `ubuntu-24.04-arm` for arm64) and the
   results are stitched into one multi-arch tag by digest. Previously arm64 was
@@ -15,6 +40,26 @@ All notable changes to pasu are documented here. The format follows
   compiling `bpf-linker` from source under emulation.
 
 ### Added
+- **The kernel layer now records what it blocks.** Until now the enforcing layer
+  blocked silently while the cooperative layer (the proxy) kept a full audit
+  trail — an operator could not answer "why did that not go out?" from the logs.
+  The eBPF program publishes each drop (destination, protocol, port) through a
+  ring buffer, and the control plane turns it into the same `AuditRecord` the
+  proxy emits. Drops happen per packet, so repeats are **suppressed in the
+  kernel**: an LRU map holds the last report time per destination and only one
+  event per five-second window is published, carrying the count of the ones it
+  swallowed. `pasu-egress`, `pasu-daemon` and `pasu-cli` all write through
+  `pasu-audit`'s `JsonlSink`, so the format matches the proxy's.
+- **Upstream timeouts on the proxy.** Without them an unresponsive provider held
+  a request open forever and connections piled up. A *total* timeout would cut
+  off long generations, so the limits are split: `--connect-timeout-secs`
+  (default 10) for the handshake and `--read-timeout-secs` (default 120) as an
+  idle timeout between reads — a stream that keeps sending never trips it.
+- **A round-trip test for human-in-the-loop approval.** The proxy and the UI each
+  had their own tests, but nothing covered the seam: `ask` → the UI queue → a
+  person decides → the request proceeds or is blocked. Four cases now do,
+  including "nobody decides" (fails closed) and "an allowed tool never reaches
+  the queue".
 - **`pasu-pii-kr` — Korean PII blocking filter** (new crate). Detects resident
   registration numbers, business registration numbers, card numbers and mobile
   numbers in text bound for an LLM, and returns an allow/deny verdict. Regex
