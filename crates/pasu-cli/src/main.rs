@@ -11,6 +11,7 @@
 //! INSIDE that cgroup, and enforces until it exits. Fail-closed: if the guard
 //! cannot attach, the command never starts.
 
+use pasu_audit::JsonlSink;
 use std::os::unix::process::{CommandExt as _, ExitStatusExt as _};
 use std::path::PathBuf;
 
@@ -78,6 +79,8 @@ fn lower(args: &RunArgs, cgroup_path: PathBuf) -> anyhow::Result<GuardConfig> {
         allow_domain: allowlist.domains,
         refresh_secs: args.refresh_secs,
         admin_socket: args.admin_socket.clone(),
+        // 커널이 막은 것을 stderr JSONL 로 남긴다(프록시와 같은 형식).
+        audit: Some(std::sync::Arc::new(JsonlSink::new(std::io::stderr()))),
     })
 }
 

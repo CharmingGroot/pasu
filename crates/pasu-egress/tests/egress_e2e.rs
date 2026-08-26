@@ -262,3 +262,49 @@ fn admin_socket_allow_then_deny_toggles_egress_live() {
         "after live `deny {ALLOWED_IP}` the running guard must drop it again"
     );
 }
+
+/// 커널이 막은 것이 감사 기록으로 남는지 — 강제 계층이 침묵하지 않는지 확인한다.
+///
+/// 협조 계층(proxy)은 판정을 기록해 왔지만 커널 계층은 아무것도 남기지 않아,
+/// 운영자가 "왜 못 나갔는지"를 감사 로그로 답할 수 없었다. 이 테스트는 실제로
+/// 드롭을 일으킨 뒤 가드의 stderr 에 그 목적지가 담긴 JSONL 한 줄이 나오는지 본다.
+#[test]
+fn kernel_drop_is_recorded_in_the_audit_log() {
+    if should_skip() {
+        return;
+    }
+    if !baseline_connects(DENIED_IP) {
+        eprintln!("SKIP: no baseline connectivity (offline?).");
+        return;
+    }
+
+    std::fs::create_dir_all(CGROUP).expect("create dedicated test cgroup");
+    let mut child = Command::new(GUARD_BIN)
+        .args(["--cgroup-path", CGROUP])
+        // 아무것도 허용하지 않는다 → 나가는 것은 전부 드롭이다.
+        .env("RUST_LOG", "info")
+        .stderr(std::process::Stdio::piped())
+        .spawn()
+        .expect("spawn guard binary");
+    std::thread::sleep(Duration::from_secs(3)); // attach 안정화
+
+    // 드롭을 일으킨다.
+    assert!(
+        !child_connects_in_cgroup(DENIED_IP),
+        "default-deny 이므로 {DENIED_IP} 는 막혀야 한다"
+    );
+    std::thread::sleep(Duration::from_secs(1)); // ring buffer 소비 여유
+
+    // 가드를 멈추고 stderr 를 읽는다.
+    let _ = child.kill();
+    let out = child.wait_with_output().expect("guard output");
+    let stderr = String::from_utf8_lossy(&out.stderr);
+
+    let audited = stderr.lines().any(|line| {
+        line.contains(DENIED_IP) && line.contains("\"deny\"") && line.contains("ebpf-egress")
+    });
+    assert!(
+        audited,
+        "커널 드롭이 감사 로그에 남아야 한다. stderr:\n{stderr}"
+    );
+}

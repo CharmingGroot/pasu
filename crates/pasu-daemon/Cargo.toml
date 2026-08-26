@@ -10,6 +10,7 @@ license.workspace = true
 # As the app-level binary it may depend on concrete crates (pasu-rules,
 # pasu-egress); the library crates themselves stay decoupled behind pasu-core.
 [dependencies]
+pasu-audit = { path = "../pasu-audit" }
 pasu-egress = { path = "../pasu-egress" }
 pasu-rules = { path = "../pasu-rules" }
 

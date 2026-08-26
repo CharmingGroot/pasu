@@ -8,6 +8,7 @@
 
 use anyhow::Context as _;
 use clap::Parser;
+use pasu_audit::JsonlSink;
 use pasu_egress::guard::{self, GuardConfig};
 use pasu_rules::Ruleset;
 
@@ -90,6 +91,7 @@ fn load(opt: Opt) -> anyhow::Result<GuardConfig> {
         allow_domain: allowlist.domains,
         refresh_secs: opt.refresh_secs,
         admin_socket: opt.admin_socket,
+        audit: Some(std::sync::Arc::new(JsonlSink::new(std::io::stderr()))),
     })
 }
 
