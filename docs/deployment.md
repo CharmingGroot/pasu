@@ -167,6 +167,41 @@ privileged pasu-egress container attaches to the pod's cgroup slice.
   name means nesting — `cgroup_parent: pasu-guarded.slice` lands at
   `/sys/fs/cgroup/pasu.slice/pasu-guarded.slice`, not at the cgroup root.
 
+## 6. WireGuard와 함께 쓰기 (VPN 우회 차단)
+
+커널 WireGuard를 쓰면 pasu는 **터널 안쪽 목적지**를 본다. `cgroup_skb`는 소켓
+계층이라 라우팅(=캡슐화)보다 앞에서 돌기 때문이다. 그래서 "이 에이전트는 VPN
+너머 이 대역에만 접근한다"를 정책으로 쓸 수 있다.
+
+```bash
+# VPN 대역만 허용 — 인터넷 직행은 커널이 drop
+pasu-egress --cgroup-path /sys/fs/cgroup/pasu-agent --allow 10.10.0.0/24
+```
+
+**`AllowedIPs`는 방화벽이 아니다.** WireGuard의 `AllowedIPs = 10.0.0.0/8`은
+"10.x로 갈 때 이 터널을 쓴다"는 **라우팅 규칙**이지, "10.x 외에는 나가지 마라"가
+아니다. 목적지가 거기 없으면 그냥 기본 경로로 나간다. pasu의 default-deny가
+그 자리를 채운다.
+
+### 실측 (Lima · Ubuntu 24.04 · 커널 6.8 · 커널 WireGuard)
+
+두 netns를 WireGuard로 묶고 `--allow 10.10.0.0/24` 만 준 상태:
+
+| 목적지 | 성격 | 결과 |
+|---|---|---|
+| `10.10.0.2` | 터널 **안쪽**, 허용 대역 | 통과 — pasu가 안쪽 주소를 본다 |
+| `1.1.1.1` | 인터넷 직행 | **차단** — VPN 우회가 막힌다 |
+| `192.168.99.2` (ICMP) | WG 엔드포인트로 직접 | 차단 |
+
+감사 로그에는 `1.1.1.1:80` 과 `192.168.99.2:0` 만 남고 **WireGuard의 바깥 UDP
+(`…:51820`)는 남지 않는다.** 그 패킷은 커널이 자기 소켓으로 보내므로 에이전트의
+cgroup에 속하지 않는다 — 터널 트래픽 자체는 필터를 거치지 않고, 정책은 안쪽
+주소로만 판단된다.
+
+> ⚠️ **유저스페이스 WireGuard(`wireguard-go`·`boringtun`, Tailscale 포함)에서는
+> 성립하지 않는다.** 캡슐화가 그 프로세스 안에서 일어나 pasu 눈에는 UDP
+> 엔드포인트 하나만 보인다. 안쪽 목적지로 정책을 쓰려면 **커널 WireGuard**여야 한다.
+
 ## Notes
 
 - **DNS / `--allow-domain`** re-resolves on an interval; because that lookup runs

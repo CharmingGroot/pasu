@@ -12,7 +12,10 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use anyhow::Context as _;
-use aya::maps::{HashMap as AyaHashMap, RingBuf};
+use aya::maps::{
+    RingBuf,
+    lpm_trie::{Key, LpmTrie},
+};
 use aya::programs::{CgroupSkb, CgroupSkbAttachType, links::CgroupAttachMode};
 #[rustfmt::skip]
 use log::{debug, warn};
@@ -21,7 +24,7 @@ use tokio::net::UnixListener;
 use tokio::signal;
 use tokio::sync::{mpsc, oneshot};
 
-use pasu_core::{AuditRecord, AuditSink, Event, EventKind, Verdict};
+use pasu_core::{AuditRecord, AuditSink, Cidr, CidrBytes, Event, EventKind, Verdict};
 use pasu_ebpf_common::DropEvent;
 
 use crate::admin::{self, Command, Status};
@@ -30,10 +33,10 @@ use crate::admin::{self, Command, Status};
 pub struct GuardConfig {
     /// Dedicated cgroup v2 path (never the root cgroup).
     pub cgroup_path: PathBuf,
-    /// Static IPv4 allow entries.
-    pub allow: Vec<Ipv4Addr>,
-    /// Destination IPv6 addresses allowed to egress (static allow entries).
-    pub allow6: Vec<Ipv6Addr>,
+    /// Destinations allowed to egress, as ranges. A bare address is a host
+    /// route (`/32`, `/128`), so exact entries and CIDR ranges share one list
+    /// and both families live in it.
+    pub allow: Vec<Cidr>,
     /// Domains whose resolved IPv4s are allowed (re-resolved periodically).
     pub allow_domain: Vec<String>,
     /// Domain re-resolution interval, seconds.
@@ -53,7 +56,6 @@ impl std::fmt::Debug for GuardConfig {
         f.debug_struct("GuardConfig")
             .field("cgroup_path", &self.cgroup_path)
             .field("allow", &self.allow)
-            .field("allow6", &self.allow6)
             .field("allow_domain", &self.allow_domain)
             .field("refresh_secs", &self.refresh_secs)
             .field("admin_socket", &self.admin_socket)
@@ -81,68 +83,74 @@ async fn refresh_domains(ebpf: &mut aya::Ebpf, domains: &[String]) -> anyhow::Re
         ips.extend(resolve(d).await);
     }
     for ip in ips {
-        allow_insert(ebpf, ip)?;
+        // 해석된 주소는 호스트 라우트(/32·/128)로 넣는다.
+        allow_insert(ebpf, Cidr::new(ip, if ip.is_ipv4() { 32 } else { 128 })?)?;
     }
     Ok(())
 }
 
-fn allow_insert(ebpf: &mut aya::Ebpf, ip: IpAddr) -> anyhow::Result<()> {
-    match ip {
-        IpAddr::V4(v4) => {
-            let mut allow: AyaHashMap<_, u32, u8> =
-                AyaHashMap::try_from(ebpf.map_mut("ALLOW").context("ALLOW map not found")?)?;
-            allow.insert(u32::from(v4), 1u8, 0)?;
+fn allow_insert(ebpf: &mut aya::Ebpf, net: Cidr) -> anyhow::Result<()> {
+    let prefix = u32::from(net.prefix_len());
+    match net.network_bytes() {
+        CidrBytes::V4(bytes) => {
+            let mut allow: LpmTrie<_, [u8; 4], u8> =
+                LpmTrie::try_from(ebpf.map_mut("ALLOW").context("ALLOW map not found")?)?;
+            allow.insert(&Key::new(prefix, bytes), 1u8, 0)?;
         }
-        IpAddr::V6(v6) => {
-            let mut allow: AyaHashMap<_, u128, u8> =
-                AyaHashMap::try_from(ebpf.map_mut("ALLOW6").context("ALLOW6 map not found")?)?;
-            allow.insert(u128::from(v6), 1u8, 0)?;
-        }
-    }
-    Ok(())
-}
-
-fn allow_remove(ebpf: &mut aya::Ebpf, ip: IpAddr) -> anyhow::Result<()> {
-    match ip {
-        IpAddr::V4(v4) => {
-            let mut allow: AyaHashMap<_, u32, u8> =
-                AyaHashMap::try_from(ebpf.map_mut("ALLOW").context("ALLOW map not found")?)?;
-            allow.remove(&u32::from(v4))?;
-        }
-        IpAddr::V6(v6) => {
-            let mut allow: AyaHashMap<_, u128, u8> =
-                AyaHashMap::try_from(ebpf.map_mut("ALLOW6").context("ALLOW6 map not found")?)?;
-            allow.remove(&u128::from(v6))?;
+        CidrBytes::V6(bytes) => {
+            let mut allow: LpmTrie<_, [u8; 16], u8> =
+                LpmTrie::try_from(ebpf.map_mut("ALLOW6").context("ALLOW6 map not found")?)?;
+            allow.insert(&Key::new(prefix, bytes), 1u8, 0)?;
         }
     }
     Ok(())
 }
 
-/// Read the current ALLOW + ALLOW6 map keys as sorted IP strings.
+fn allow_remove(ebpf: &mut aya::Ebpf, net: Cidr) -> anyhow::Result<()> {
+    let prefix = u32::from(net.prefix_len());
+    match net.network_bytes() {
+        CidrBytes::V4(bytes) => {
+            let mut allow: LpmTrie<_, [u8; 4], u8> =
+                LpmTrie::try_from(ebpf.map_mut("ALLOW").context("ALLOW map not found")?)?;
+            allow.remove(&Key::new(prefix, bytes))?;
+        }
+        CidrBytes::V6(bytes) => {
+            let mut allow: LpmTrie<_, [u8; 16], u8> =
+                LpmTrie::try_from(ebpf.map_mut("ALLOW6").context("ALLOW6 map not found")?)?;
+            allow.remove(&Key::new(prefix, bytes))?;
+        }
+    }
+    Ok(())
+}
+
+/// Live contents of the kernel allowlist, formatted for the admin socket.
+///
+/// LPM tries iterate as `(prefix_len, bytes)` pairs, so entries come back the
+/// way they were written: a range stays a range, a host stays a bare address.
 fn allow_list(ebpf: &aya::Ebpf) -> Vec<String> {
-    let mut out: Vec<IpAddr> = Vec::new();
+    let mut out: Vec<String> = Vec::new();
     if let Some(map) = ebpf.map("ALLOW") {
-        if let Ok(allow) = <AyaHashMap<_, u32, u8>>::try_from(map) {
-            out.extend(
-                allow
-                    .keys()
-                    .filter_map(Result::ok)
-                    .map(|k| IpAddr::from(Ipv4Addr::from(k))),
-            );
+        if let Ok(allow) = <LpmTrie<_, [u8; 4], u8>>::try_from(map) {
+            for (key, _) in allow.iter().filter_map(Result::ok) {
+                let addr = IpAddr::V4(Ipv4Addr::from(key.data()));
+                if let Ok(c) = Cidr::new(addr, key.prefix_len() as u8) {
+                    out.push(c.to_string());
+                }
+            }
         }
     }
     if let Some(map) = ebpf.map("ALLOW6") {
-        if let Ok(allow) = <AyaHashMap<_, u128, u8>>::try_from(map) {
-            out.extend(
-                allow
-                    .keys()
-                    .filter_map(Result::ok)
-                    .map(|k| IpAddr::from(Ipv6Addr::from(k))),
-            );
+        if let Ok(allow) = <LpmTrie<_, [u8; 16], u8>>::try_from(map) {
+            for (key, _) in allow.iter().filter_map(Result::ok) {
+                let addr = IpAddr::V6(Ipv6Addr::from(key.data()));
+                if let Ok(c) = Cidr::new(addr, key.prefix_len() as u8) {
+                    out.push(c.to_string());
+                }
+            }
         }
     }
     out.sort();
-    out.into_iter().map(|ip| ip.to_string()).collect()
+    out
 }
 
 /// Accept connections on the admin socket and forward parsed requests to the
@@ -288,14 +296,10 @@ impl Guard {
             }
         }
 
-        // Control plane → eBPF: inject static IPs into the ALLOW / ALLOW6 maps.
-        for ip in &cfg.allow {
-            allow_insert(&mut ebpf, IpAddr::V4(*ip))?;
-            println!("allowlist += {ip}");
-        }
-        for ip6 in &cfg.allow6 {
-            allow_insert(&mut ebpf, IpAddr::V6(*ip6))?;
-            println!("allowlist += {ip6}");
+        // Control plane → eBPF: inject the allowed ranges into the LPM tries.
+        for net in &cfg.allow {
+            allow_insert(&mut ebpf, *net)?;
+            println!("allowlist += {net}");
         }
         if !cfg.allow_domain.is_empty() {
             refresh_domains(&mut ebpf, &cfg.allow_domain).await?;

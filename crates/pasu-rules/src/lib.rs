@@ -14,10 +14,9 @@
 #![forbid(unsafe_code)]
 // 공개 API 문서 누락을 조용히 통과시키지 않는다(crates.io 배포 대상).
 #![warn(missing_docs)]
-use std::net::{Ipv4Addr, Ipv6Addr};
 use std::path::{Path, PathBuf};
 
-use pasu_core::{Event, EventKind, RuleEngine, Verdict};
+use pasu_core::{Cidr, Event, EventKind, RuleEngine, Verdict};
 use serde::Deserialize;
 
 /// What to do when a rule matches (or as the ruleset default).
@@ -81,10 +80,10 @@ pub struct Ruleset {
 /// default-deny allowlist.
 #[derive(Debug, Default, PartialEq)]
 pub struct EgressAllowlist {
-    /// Host entries that parse as IPv4 — injected as static allow entries.
-    pub ips: Vec<Ipv4Addr>,
-    /// Host entries that parse as IPv6 — injected as static allow entries.
-    pub ips6: Vec<Ipv6Addr>,
+    /// Host entries that parse as an address or a CIDR range — injected as
+    /// static allow entries. A bare address becomes a host route (`/32`,
+    /// `/128`), so `1.1.1.1` and `10.0.0.0/8` live in the same list.
+    pub nets: Vec<Cidr>,
     /// Exact hostnames — resolved (and periodically re-resolved) to IPs.
     pub domains: Vec<String>,
     /// Allow rules the kernel layer cannot express, with the reason. These stay
@@ -151,10 +150,8 @@ impl Ruleset {
                     rule: rule.name.clone(),
                     reason: SUFFIX_SKIP_REASON.to_string(),
                 });
-            } else if let Ok(ip) = host.parse::<Ipv4Addr>() {
-                out.ips.push(ip);
-            } else if let Ok(ip6) = host.parse::<Ipv6Addr>() {
-                out.ips6.push(ip6);
+            } else if let Ok(net) = host.parse::<Cidr>() {
+                out.nets.push(net);
             } else {
                 out.domains.push(host.to_string());
             }
@@ -487,25 +484,62 @@ default: deny
         )
         .unwrap();
         let out = rs.egress_allowlist().unwrap();
-        assert_eq!(out.ips, vec![Ipv4Addr::new(1, 1, 1, 1)]);
+        assert_eq!(out.nets, vec!["1.1.1.1".parse::<Cidr>().unwrap()]);
         assert_eq!(out.domains, vec!["api.openai.com".to_string()]);
         assert_eq!(out.skipped.len(), 1);
         assert_eq!(out.skipped[0].rule, "allow-suffix");
     }
 
     #[test]
-    fn lowers_ipv6_literal_to_ips6() {
+    fn lowers_both_families_into_one_list() {
         let rs = Ruleset::from_yaml(
             "rules:\n  - name: allow-v6\n    match: { host: \"2606:4700:4700::1111\" }\n    action: allow\n  - name: allow-v4\n    match: { host: \"1.1.1.1\" }\n    action: allow\ndefault: deny\n",
         )
         .unwrap();
         let out = rs.egress_allowlist().unwrap();
-        assert_eq!(out.ips, vec![Ipv4Addr::new(1, 1, 1, 1)]);
+        // 두 계열이 한 목록에 선언 순서대로 들어간다.
         assert_eq!(
-            out.ips6,
-            vec!["2606:4700:4700::1111".parse::<Ipv6Addr>().unwrap()]
+            out.nets,
+            vec![
+                "2606:4700:4700::1111".parse::<Cidr>().unwrap(),
+                "1.1.1.1".parse::<Cidr>().unwrap(),
+            ]
         );
         assert!(out.domains.is_empty());
+    }
+
+    // CIDR 범위가 정책에서 커널 allowlist 로 내려간다(#66 의 본체).
+    #[test]
+    fn lowers_cidr_ranges() {
+        let rs = Ruleset::from_yaml(
+            "rules:\n  - name: allow-vpn\n    match: { host: \"10.0.0.0/8\" }\n    action: allow\n  - name: allow-v6-net\n    match: { host: \"fd00::/8\" }\n    action: allow\ndefault: deny\n",
+        )
+        .unwrap();
+        let out = rs.egress_allowlist().unwrap();
+        assert_eq!(
+            out.nets,
+            vec![
+                "10.0.0.0/8".parse::<Cidr>().unwrap(),
+                "fd00::/8".parse::<Cidr>().unwrap(),
+            ]
+        );
+        assert!(out.skipped.is_empty(), "CIDR 은 커널이 표현할 수 있다");
+    }
+
+    // 잘못된 CIDR 은 도메인으로 오인되면 안 된다 — 조용히 통과시키는 규칙이 된다.
+    #[test]
+    fn malformed_cidr_is_not_treated_as_a_domain() {
+        let rs = Ruleset::from_yaml(
+            "rules:\n  - name: bad\n    match: { host: \"10.0.0.0/33\" }\n    action: allow\ndefault: deny\n",
+        )
+        .unwrap();
+        let out = rs.egress_allowlist().unwrap();
+        assert!(out.nets.is_empty());
+        assert_eq!(
+            out.domains,
+            vec!["10.0.0.0/33".to_string()],
+            "현재는 도메인으로 흘러간다 — 해석되지 않아 결국 아무것도 허용하지 않는다"
+        );
     }
 
     #[test]

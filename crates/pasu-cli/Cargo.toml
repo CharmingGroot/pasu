@@ -11,6 +11,7 @@ rust-version.workspace = true
 # concrete crates; the library crates stay decoupled behind pasu-core.
 [dependencies]
 pasu-audit = { path = "../pasu-audit" }
+pasu-core = { path = "../pasu-core" }
 pasu-egress = { path = "../pasu-egress" }
 pasu-rules = { path = "../pasu-rules" }
 

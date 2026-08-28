@@ -61,11 +61,8 @@ fn lower(args: &RunArgs, cgroup_path: PathBuf) -> anyhow::Result<GuardConfig> {
     let allowlist = ruleset.egress_allowlist()?;
 
     println!("policy: {}", args.policy.display());
-    for ip in &allowlist.ips {
-        println!("  kernel allow ip     {ip}");
-    }
-    for ip6 in &allowlist.ips6 {
-        println!("  kernel allow ip     {ip6}");
+    for net in &allowlist.nets {
+        println!("  kernel allow        {net}");
     }
     for d in &allowlist.domains {
         println!("  kernel allow domain {d}");
@@ -73,14 +70,13 @@ fn lower(args: &RunArgs, cgroup_path: PathBuf) -> anyhow::Result<GuardConfig> {
     for s in &allowlist.skipped {
         println!("  hook-layer only     {} ({})", s.rule, s.reason);
     }
-    if allowlist.ips.is_empty() && allowlist.ips6.is_empty() && allowlist.domains.is_empty() {
+    if allowlist.nets.is_empty() && allowlist.domains.is_empty() {
         println!("  (no kernel-expressible allow rules: everything is dropped)");
     }
 
     Ok(GuardConfig {
         cgroup_path,
-        allow: allowlist.ips,
-        allow6: allowlist.ips6,
+        allow: allowlist.nets,
         allow_domain: allowlist.domains,
         refresh_secs: args.refresh_secs,
         admin_socket: args.admin_socket.clone(),
@@ -206,7 +202,10 @@ mod tests {
         )
         .unwrap();
         let cfg = lower(&args(&path), "/sys/fs/cgroup/x".into()).unwrap();
-        assert_eq!(cfg.allow, vec![std::net::Ipv4Addr::new(1, 1, 1, 1)]);
+        assert_eq!(
+            cfg.allow,
+            vec!["1.1.1.1".parse::<pasu_core::Cidr>().unwrap()]
+        );
         assert!(cfg.allow_domain.is_empty());
     }
 
