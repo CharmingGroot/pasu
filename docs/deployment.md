@@ -202,6 +202,57 @@ cgroup에 속하지 않는다 — 터널 트래픽 자체는 필터를 거치지
 > 성립하지 않는다.** 캡슐화가 그 프로세스 안에서 일어나 pasu 눈에는 UDP
 > 엔드포인트 하나만 보인다. 안쪽 목적지로 정책을 쓰려면 **커널 WireGuard**여야 한다.
 
+## 7. 두 계층을 함께 쓸 때의 권장 구성
+
+프록시(도구 가드)와 커널 egress 를 함께 쓴다면, **에이전트 cgroup 의 커널
+allowlist 에 LLM 주소를 넣지 않는다.**
+
+커널 계층은 **목적지만** 본다 — 그 연결이 프록시를 거쳤는지, 도구가 직접 연
+소켓인지 구분하지 못한다. 따라서 에이전트 cgroup 에서 LLM 주소를 허용하면
+도구가 프록시를 건너뛰고 LLM 에 직접 도달할 수 있고, 그 경로에는 도구 가드도
+HITL 승인도 적용되지 않는다.
+
+프록시를 `127.0.0.1` 에 두면 루프백 예외로 통과하므로, **커널 allowlist 에서
+LLM 대역을 빼는 것만으로** 에이전트가 프록시를 반드시 경유하게 된다.
+
+```yaml
+# 권장: 에이전트 정책에 LLM 호스트를 넣지 않는다.
+# 프록시(127.0.0.1)는 루프백 예외로 통과하고, 프록시가 LLM 으로 포워딩한다.
+rules:
+  - name: allow-bash
+    match: { tool: bash }
+    action: allow
+default: deny
+```
+
+```bash
+# 프록시는 가드 밖에서 돌린다(또는 별도 cgroup). 여기서만 LLM 에 도달한다.
+pasu-proxy --policy rules.yaml --listen 127.0.0.1:8788 \
+           --upstream http://vllm.internal:8000 --provider openai
+
+# 에이전트는 가드 안. LLM 주소를 열지 않는다.
+sudo pasu run --policy rules.yaml -- <에이전트 명령>
+```
+
+> ⚠️ **LLM 이 에이전트와 같은 호스트에서 도는 경우에는 이 구성이 성립하지
+> 않는다.** 루프백은 커널 가드가 무조건 통과시키므로, 커널 allowlist 에서
+> 무엇을 빼든 도구가 `127.0.0.1:<LLM 포트>` 로 직접 갈 수 있다. 이때는 LLM 을
+> 별도 호스트·네트워크 네임스페이스·컨테이너 네트워크로 분리해야 한다.
+
+`sudo pasu run` 은 자식을 root 로 실행한다. 에이전트가 사용자 홈에 상태를 두면
+그 파일들이 root 소유가 되어, **가드를 떼도 에이전트가 정상 동작하지 않는다.**
+cgroup 배치 후 uid 를 되돌린다 — uid 를 바꿔도 cgroup 소속은 유지되므로 가드는
+그대로 적용된다.
+
+```bash
+sudo pasu run --policy rules.yaml -- \
+  setpriv --reuid=$(id -u) --regid=$(id -g) --init-groups \
+  env HOME=$HOME PATH=$HOME/.local/bin:/usr/bin:/bin \
+  <에이전트 명령>
+```
+
+실측 근거는 [opencode 연동 E2E](opencode-e2e.md) 에 있다.
+
 ## Notes
 
 - **DNS / `--allow-domain`** re-resolves on an interval; because that lookup runs
