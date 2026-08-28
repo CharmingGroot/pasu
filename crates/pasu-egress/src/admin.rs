@@ -12,7 +12,7 @@
 //! The socket only mediates requests; the eBPF `ALLOW` map is owned by the guard
 //! loop, which applies commands one at a time (no shared mutable eBPF state).
 
-use std::net::IpAddr;
+use pasu_core::Cidr;
 
 use tokio::sync::oneshot;
 
@@ -20,8 +20,8 @@ use tokio::sync::oneshot;
 #[derive(Debug, PartialEq)]
 pub enum Request {
     Status,
-    Allow(IpAddr),
-    Deny(IpAddr),
+    Allow(Cidr),
+    Deny(Cidr),
 }
 
 /// Parse one request line. Case-insensitive verb; a single IP (v4 or v6)
@@ -34,14 +34,14 @@ pub fn parse_request(line: &str) -> Result<Request, String> {
         "allow" | "deny" => {
             let arg = parts
                 .next()
-                .ok_or_else(|| format!("{verb}: missing <ip>"))?;
-            let ip: IpAddr = arg
+                .ok_or_else(|| format!("{verb}: missing <ip|cidr>"))?;
+            let net: Cidr = arg
                 .parse()
-                .map_err(|_| format!("{verb}: invalid ip `{arg}`"))?;
+                .map_err(|e| format!("{verb}: invalid address `{arg}` ({e})"))?;
             Ok(if verb == "allow" {
-                Request::Allow(ip)
+                Request::Allow(net)
             } else {
-                Request::Deny(ip)
+                Request::Deny(net)
             })
         }
         "" => Err("empty request".to_string()),
@@ -64,8 +64,8 @@ pub struct Status {
 /// A command handed to the guard loop, with a channel for its reply.
 pub enum Command {
     Status(oneshot::Sender<Status>),
-    Allow(IpAddr, oneshot::Sender<Result<(), String>>),
-    Deny(IpAddr, oneshot::Sender<Result<(), String>>),
+    Allow(Cidr, oneshot::Sender<Result<(), String>>),
+    Deny(Cidr, oneshot::Sender<Result<(), String>>),
 }
 
 #[cfg(test)]

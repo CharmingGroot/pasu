@@ -6,6 +6,30 @@ All notable changes to pasu are documented here. The format follows
 
 ## [Unreleased]
 
+### Added
+- **CIDR ranges in the kernel allowlist** (#66). The eBPF maps are now
+  longest-prefix-match tries, so a rule can name a range (`10.0.0.0/8`,
+  `fd00::/8`) instead of enumerating addresses. A bare address stays valid and
+  becomes a host route (`/32`, `/128`), so existing policies are unaffected.
+  Keys are the raw address bytes in network order — an LPM key is walked bit by
+  bit from the most significant, so a host-order integer would match the wrong
+  prefixes on a little-endian machine.
+- **`Cidr` in `pasu-core`** — one type for both families, shared by the rule
+  engine (which lowers policy) and the egress guard (which injects into the
+  kernel). Host bits are cleared when building the kernel key, so `10.1.2.3/8`
+  and `10.0.0.0/8` are the same entry.
+- **WireGuard deployment notes**, verified on a real kernel. With kernel
+  WireGuard the guard sees the **inner** destination (the `cgroup_skb` hook runs
+  before routing, and therefore before encapsulation), so a policy can name what
+  the agent reaches through the tunnel. Because `AllowedIPs` is a routing rule
+  rather than a firewall, pasu's default-deny is what actually stops the agent
+  from going around the VPN. Userspace WireGuard does not work this way — the
+  note says so.
+
+### Breaking
+- `GuardConfig.allow` is now `Vec<Cidr>` and `allow6` is gone; both families
+  live in one list. `EgressAllowlist.ips`/`ips6` likewise became `nets`.
+
 ## [0.2.0] - 2026-08-26
 
 Hardening release. A cross-cutting audit — walking each concern across every

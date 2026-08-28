@@ -411,3 +411,263 @@ mod tests {
         assert!(rec.reason.is_none());
     }
 }
+
+/// An address range: an address plus a prefix length (`10.0.0.0/8`, `1.1.1.1`).
+///
+/// A bare address parses as a host route (`/32` for v4, `/128` for v6), so
+/// exact entries and ranges share one type.
+///
+/// Lives in core because both the rule engine (which lowers policy) and the
+/// egress guard (which injects into the kernel) need it.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub struct Cidr {
+    addr: core::net::IpAddr,
+    prefix_len: u8,
+}
+
+impl Cidr {
+    /// Build from an address and prefix length.
+    ///
+    /// # Errors
+    /// The prefix length must fit the family (≤32 for v4, ≤128 for v6).
+    pub fn new(addr: core::net::IpAddr, prefix_len: u8) -> Result<Self, CidrError> {
+        let max = if addr.is_ipv4() { 32 } else { 128 };
+        if prefix_len > max {
+            return Err(CidrError::PrefixTooLong { prefix_len, max });
+        }
+        Ok(Self { addr, prefix_len })
+    }
+
+    /// The address, with host bits as written (not masked).
+    #[must_use]
+    pub fn addr(&self) -> core::net::IpAddr {
+        self.addr
+    }
+
+    /// Prefix length in bits.
+    #[must_use]
+    pub fn prefix_len(&self) -> u8 {
+        self.prefix_len
+    }
+
+    /// Is this a single host (`/32` or `/128`)?
+    #[must_use]
+    pub fn is_host(&self) -> bool {
+        self.prefix_len == if self.addr.is_ipv4() { 32 } else { 128 }
+    }
+
+    /// The network address in **network byte order**, with host bits cleared.
+    ///
+    /// Kernel LPM tries compare keys byte-wise from the most significant bit,
+    /// so the key must be big-endian and must not carry host bits — otherwise
+    /// `10.1.2.3/8` and `10.0.0.0/8` would be different keys for the same range.
+    #[must_use]
+    pub fn network_bytes(&self) -> CidrBytes {
+        match self.addr {
+            core::net::IpAddr::V4(v4) => {
+                let mut b = v4.octets();
+                mask_bytes(&mut b, self.prefix_len);
+                CidrBytes::V4(b)
+            }
+            core::net::IpAddr::V6(v6) => {
+                let mut b = v6.octets();
+                mask_bytes(&mut b, self.prefix_len);
+                CidrBytes::V6(b)
+            }
+        }
+    }
+}
+
+/// Network-order bytes of a [`Cidr`], per family.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum CidrBytes {
+    /// IPv4, 4 bytes.
+    V4([u8; 4]),
+    /// IPv6, 16 bytes.
+    V6([u8; 16]),
+}
+
+/// Clear every bit past `prefix_len`.
+fn mask_bytes(bytes: &mut [u8], prefix_len: u8) {
+    let keep = usize::from(prefix_len);
+    for (i, b) in bytes.iter_mut().enumerate() {
+        let bit_start = i * 8;
+        if bit_start >= keep {
+            *b = 0;
+        } else if bit_start + 8 > keep {
+            let keep_bits = keep - bit_start;
+            *b &= 0xffu8 << (8 - keep_bits);
+        }
+    }
+}
+
+/// Why a CIDR string could not be parsed.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum CidrError {
+    /// The address part is not a valid IP address.
+    BadAddress(String),
+    /// The prefix part is not a number.
+    BadPrefix(String),
+    /// The prefix length exceeds what the family allows.
+    PrefixTooLong {
+        /// The prefix length that was given.
+        prefix_len: u8,
+        /// The maximum for this family (32 or 128).
+        max: u8,
+    },
+}
+
+impl core::fmt::Display for CidrError {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        match self {
+            CidrError::BadAddress(s) => write!(f, "not an IP address: {s:?}"),
+            CidrError::BadPrefix(s) => write!(f, "not a prefix length: {s:?}"),
+            CidrError::PrefixTooLong { prefix_len, max } => {
+                write!(
+                    f,
+                    "prefix /{prefix_len} exceeds the maximum /{max} for this family"
+                )
+            }
+        }
+    }
+}
+
+impl std::error::Error for CidrError {}
+
+impl core::str::FromStr for Cidr {
+    type Err = CidrError;
+
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        match s.split_once('/') {
+            Some((addr, prefix)) => {
+                let addr: core::net::IpAddr = addr
+                    .parse()
+                    .map_err(|_| CidrError::BadAddress(addr.to_string()))?;
+                let prefix_len: u8 = prefix
+                    .parse()
+                    .map_err(|_| CidrError::BadPrefix(prefix.to_string()))?;
+                Cidr::new(addr, prefix_len)
+            }
+            // A bare address is a host route.
+            None => {
+                let addr: core::net::IpAddr = s
+                    .parse()
+                    .map_err(|_| CidrError::BadAddress(s.to_string()))?;
+                let prefix_len = if addr.is_ipv4() { 32 } else { 128 };
+                Cidr::new(addr, prefix_len)
+            }
+        }
+    }
+}
+
+impl<'de> serde::Deserialize<'de> for Cidr {
+    /// 설정 파일에서는 문자열로 쓴다("10.0.0.0/8", "1.1.1.1").
+    fn deserialize<D: serde::Deserializer<'de>>(d: D) -> Result<Self, D::Error> {
+        let s = <String as serde::Deserialize>::deserialize(d)?;
+        s.parse().map_err(serde::de::Error::custom)
+    }
+}
+
+impl serde::Serialize for Cidr {
+    fn serialize<S: serde::Serializer>(&self, s: S) -> Result<S::Ok, S::Error> {
+        s.collect_str(self)
+    }
+}
+
+impl core::fmt::Display for Cidr {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        if self.is_host() {
+            write!(f, "{}", self.addr)
+        } else {
+            write!(f, "{}/{}", self.addr, self.prefix_len)
+        }
+    }
+}
+
+#[cfg(test)]
+mod cidr_tests {
+    use super::*;
+    use core::str::FromStr as _;
+
+    #[test]
+    fn bare_address_is_a_host_route() {
+        let c = Cidr::from_str("1.1.1.1").expect("parses");
+        assert_eq!(c.prefix_len(), 32);
+        assert!(c.is_host());
+        assert_eq!(c.to_string(), "1.1.1.1", "호스트는 접미사 없이 표시한다");
+
+        let c6 = Cidr::from_str("2606:4700::1111").expect("parses");
+        assert_eq!(c6.prefix_len(), 128);
+    }
+
+    #[test]
+    fn parses_ranges_of_both_families() {
+        assert_eq!(Cidr::from_str("10.0.0.0/8").unwrap().prefix_len(), 8);
+        assert_eq!(Cidr::from_str("fd00::/8").unwrap().prefix_len(), 8);
+        assert_eq!(
+            Cidr::from_str("10.0.0.0/8").unwrap().to_string(),
+            "10.0.0.0/8"
+        );
+    }
+
+    #[test]
+    fn rejects_malformed_input() {
+        assert!(matches!(
+            Cidr::from_str("not-an-ip"),
+            Err(CidrError::BadAddress(_))
+        ));
+        assert!(matches!(
+            Cidr::from_str("10.0.0.0/x"),
+            Err(CidrError::BadPrefix(_))
+        ));
+        assert!(matches!(
+            Cidr::from_str("10.0.0.0/33"),
+            Err(CidrError::PrefixTooLong { .. })
+        ));
+        assert!(matches!(
+            Cidr::from_str("fd00::/129"),
+            Err(CidrError::PrefixTooLong { .. })
+        ));
+    }
+
+    // 호스트 비트가 남아 있으면 같은 대역이 서로 다른 키가 되어 LPM 조회가 어긋난다.
+    #[test]
+    fn host_bits_are_cleared_for_the_kernel_key() {
+        let written = Cidr::from_str("10.1.2.3/8").unwrap().network_bytes();
+        let canonical = Cidr::from_str("10.0.0.0/8").unwrap().network_bytes();
+        assert_eq!(
+            written, canonical,
+            "10.1.2.3/8 과 10.0.0.0/8 은 같은 키여야 한다"
+        );
+        assert_eq!(written, CidrBytes::V4([10, 0, 0, 0]));
+    }
+
+    #[test]
+    fn masks_inside_a_byte() {
+        // /12 는 두 번째 바이트의 상위 4비트만 남긴다: 172.16.0.0/12
+        assert_eq!(
+            Cidr::from_str("172.31.255.255/12").unwrap().network_bytes(),
+            CidrBytes::V4([172, 16, 0, 0])
+        );
+    }
+
+    #[test]
+    fn bytes_are_network_order() {
+        // 1.2.3.4 는 바이트 순서 그대로여야 한다(호스트 오더로 뒤집히면 안 된다).
+        assert_eq!(
+            Cidr::from_str("1.2.3.4").unwrap().network_bytes(),
+            CidrBytes::V4([1, 2, 3, 4])
+        );
+    }
+
+    #[test]
+    fn ipv6_masking_spans_bytes() {
+        let c = Cidr::from_str("fd12:3456::/16").unwrap();
+        let CidrBytes::V6(b) = c.network_bytes() else {
+            panic!("v6 이어야 한다")
+        };
+        assert_eq!(b[0], 0xfd);
+        assert_eq!(b[1], 0x12);
+        assert!(b[2..].iter().all(|&x| x == 0), "16비트 뒤는 전부 0");
+    }
+}

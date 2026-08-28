@@ -4,22 +4,30 @@
 use aya_ebpf::{
     helpers::bpf_ktime_get_ns,
     macros::{cgroup_skb, map},
-    maps::{HashMap, LruHashMap, RingBuf},
+    maps::{
+        LruHashMap, RingBuf,
+        lpm_trie::{Key, LpmTrie},
+    },
     programs::SkBuffContext,
 };
 use aya_log_ebpf::info;
 use pasu_ebpf_common::DropEvent;
 
-// default-deny allowlist. Destinations allowed to egress are injected from user
-// space (control plane); anything else is dropped. IPv4 keys are host-order u32;
-// IPv6 keys are the 16-byte address as a big-endian u128 (matches u128::from(Ipv6Addr)).
+// default-deny allowlist, as longest-prefix-match tries so a rule can name a
+// range (10.0.0.0/8) and not just single addresses. Entries are injected from
+// user space (control plane); anything that does not match is dropped.
+//
+// Keys are the raw address bytes in **network order**. The kernel walks an LPM
+// key bit by bit from the most significant, so a host-order integer key would
+// match the wrong prefixes on a little-endian machine. Byte arrays make the
+// order explicit — there is nothing to get backwards.
 //
 // Because unlisted traffic is dropped, this MUST be attached to a dedicated cgroup,
 // NEVER the root cgroup (that would cut the host's own egress, including SSH).
 #[map]
-static ALLOW: HashMap<u32, u8> = HashMap::with_max_entries(1024, 0);
+static ALLOW: LpmTrie<[u8; 4], u8> = LpmTrie::with_max_entries(1024, 0);
 #[map]
-static ALLOW6: HashMap<u128, u8> = HashMap::with_max_entries(1024, 0);
+static ALLOW6: LpmTrie<[u8; 16], u8> = LpmTrie::with_max_entries(1024, 0);
 
 // 막은 egress 를 유저스페이스로 올린다. 감사(audit) 용도이며, 여기서 실패해도
 // 차단 판정에는 영향이 없다 — 기록을 잃을지언정 통과시키지 않는다.
@@ -80,8 +88,9 @@ fn try_v4(ctx: &SkBuffContext) -> Result<i32, ()> {
     if dst >> 24 == 127 {
         return Ok(1);
     }
-    if unsafe { ALLOW.get(&dst) }.is_some() {
-        return Ok(1); // allowlisted → pass
+    // /32 로 조회하면 트라이가 가장 긴 일치 접두사를 찾아 준다.
+    if ALLOW.get(&Key::new(32, dst_be.to_ne_bytes())).is_some() {
+        return Ok(1); // allowlisted (host or range) → pass
     }
     // IHL(하위 4비트)로 가변 길이 IPv4 헤더를 건너뛰어 L4 를 찾는다.
     let ihl = (ctx.load::<u8>(0).map_err(|_| ())? & 0x0f) as usize;
@@ -115,9 +124,17 @@ fn try_v6(ctx: &SkBuffContext) -> Result<i32, ()> {
         return Ok(1);
     }
 
-    let key: u128 = ((hi as u128) << 64) | (lo as u128); // == u128::from(Ipv6Addr)
-    if unsafe { ALLOW6.get(&key) }.is_some() {
-        return Ok(1); // allowlisted → pass
+    let mut octets = [0u8; 16];
+    let hi_be = hi.to_be_bytes();
+    let lo_be = lo.to_be_bytes();
+    let mut i = 0;
+    while i < 8 {
+        octets[i] = hi_be[i];
+        octets[i + 8] = lo_be[i];
+        i += 1;
+    }
+    if ALLOW6.get(&Key::new(128, octets)).is_some() {
+        return Ok(1); // allowlisted (host or range) → pass
     }
     // IPv6 기본 헤더는 40바이트 고정. 확장 헤더가 있으면 next header 가
     // TCP/UDP 가 아니므로 포트는 0 으로 남는다(잘못된 값을 싣지 않는다).
