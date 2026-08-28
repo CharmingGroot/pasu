@@ -180,6 +180,14 @@ docker build -f deploy/Dockerfile -t pasu-egress:latest .
 
 사이드카([`deploy/docker-compose.yml`](deploy/docker-compose.yml))와 쿠버네티스([`deploy/k8s/`](deploy/k8s)) 배치, cgroup 타겟팅 규칙은 **[docs/deployment.md](docs/deployment.md)**에 정리해 두었습니다.
 
+## 실측 — opencode 연동 E2E
+
+오픈소스 코딩 에이전트 [opencode](https://github.com/anomalyco/opencode)를 사내망 환경에서 감싸고 두 계층이 실제로 무엇을 막는지 측정했습니다. 핵심은 **정책상 허용된 도구(`bash`)로 유출을 시도**한 대조 실험입니다 — 프록시는 막을 이유가 없어 통과시켰고(`EXFIL_OK`), 커널 계층을 더하자 같은 조건에서 차단됐습니다(`EXFIL_BLOCKED`). 에이전트는 정상 종료했습니다.
+
+이어서 **적대적 재검증**을 돌려, 통과할 것으로 예상되는 항목을 일부러 포함했습니다. cgroup 이탈은 세 경로 모두 막혔고(`unshare -n` 포함) 정책에 도구명을 잘못 적어도 fail-closed로 떨어졌습니다. 반대로 허용된 목적지로의 데이터 전송과 DNS 질의는 그대로 나갔습니다 — egress allowlist가 **어디로 가는지**만 보고 **무엇을 보내는지**는 보지 않는다는 한계입니다.
+
+측정값과 검증하지 못한 항목까지 **[docs/opencode-e2e.md](docs/opencode-e2e.md)**에 정리해 두었습니다.
+
 ## 크레이트
 
 <p align="center">
