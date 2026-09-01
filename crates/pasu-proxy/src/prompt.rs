@@ -24,7 +24,7 @@
 
 use serde_json::Value;
 
-use crate::parse::Provider;
+use crate::parse::{Provider, WireFormat};
 
 /// Every piece of human-authored text in a request body, in the order it
 /// appears.
@@ -33,10 +33,10 @@ use crate::parse::Provider;
 /// an unknown layout. The caller decides what to do with that; this does not
 /// guess, because guessing wrong in either direction is worse than saying so.
 #[must_use]
-pub fn prompt_text(body: &[u8], provider: Provider) -> Option<Vec<String>> {
+pub fn prompt_text(body: &[u8], provider: &dyn WireFormat) -> Option<Vec<String>> {
     let mut value: Value = serde_json::from_slice(body).ok()?;
     let mut found = Vec::new();
-    visit(&mut value, provider, &mut |text| {
+    provider.visit_prompt(&mut value, &mut |text| {
         found.push(text.to_string());
         None
     })?;
@@ -60,17 +60,17 @@ pub fn prompt_text(body: &[u8], provider: Provider) -> Option<Vec<String>> {
 #[must_use]
 pub fn rewrite_prompt(
     body: &[u8],
-    provider: Provider,
+    provider: &dyn WireFormat,
     rewrite: &mut dyn FnMut(&str) -> Option<String>,
 ) -> Option<Vec<u8>> {
     let mut value: Value = serde_json::from_slice(body).ok()?;
-    visit(&mut value, provider, rewrite)?;
+    provider.visit_prompt(&mut value, rewrite)?;
     serde_json::to_vec(&value).ok()
 }
 
 /// The single traversal. `f` sees every human-authored string; returning
 /// `Some(replacement)` writes it back.
-fn visit(
+pub(crate) fn visit(
     value: &mut Value,
     provider: Provider,
     f: &mut dyn FnMut(&str) -> Option<String>,
@@ -170,7 +170,7 @@ mod tests {
             {"role":"user","content":[{"type":"text","text":"the record says 900101-1234567"}]}
         ]}"#;
 
-        let text = prompt_text(body, Provider::OpenAi).expect("a known shape");
+        let text = prompt_text(body, &Provider::OpenAi).expect("a known shape");
 
         assert!(
             text.iter().any(|t| t.contains("900101-1234567")),
@@ -186,7 +186,7 @@ mod tests {
             {"role":"user","content":[{"type":"tool_result","content":"customer 900101-1234567"}]}
         ]}"#;
 
-        let text = prompt_text(body, Provider::Anthropic).expect("a known shape");
+        let text = prompt_text(body, &Provider::Anthropic).expect("a known shape");
 
         assert!(text.iter().any(|t| t == "be careful"));
         assert!(
@@ -200,7 +200,7 @@ mod tests {
         let body = br#"{"systemInstruction":{"parts":[{"text":"be brief"}]},
             "contents":[{"parts":[{"text":"id 900101-1234567"}]}]}"#;
 
-        let text = prompt_text(body, Provider::Gemini).expect("a known shape");
+        let text = prompt_text(body, &Provider::Gemini).expect("a known shape");
 
         assert!(text.iter().any(|t| t == "be brief"));
         assert!(text.iter().any(|t| t.contains("900101-1234567")));
@@ -213,14 +213,14 @@ mod tests {
         let body = br#"{"model":"gpt-4","tools":[{"function":{"name":"sql","description":"900101-1234567"}}],
             "messages":[{"role":"user","content":"hello"}]}"#;
 
-        let text = prompt_text(body, Provider::OpenAi).expect("a known shape");
+        let text = prompt_text(body, &Provider::OpenAi).expect("a known shape");
 
         assert_eq!(text, vec!["hello".to_string()]);
     }
 
     #[test]
     fn an_unknown_shape_says_so_rather_than_guessing() {
-        assert!(prompt_text(b"not json", Provider::OpenAi).is_none());
-        assert!(prompt_text(br#"{"other":1}"#, Provider::OpenAi).is_none());
+        assert!(prompt_text(b"not json", &Provider::OpenAi).is_none());
+        assert!(prompt_text(br#"{"other":1}"#, &Provider::OpenAi).is_none());
     }
 }

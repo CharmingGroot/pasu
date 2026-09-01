@@ -293,7 +293,7 @@ async fn main() -> anyhow::Result<()> {
                 guard,
                 client,
                 upstream_base: opt.upstream.clone(),
-                provider,
+                provider: Arc::new(provider),
                 inspectors: chosen_inspectors.clone(),
                 redaction: redaction.clone(),
             });
@@ -311,7 +311,7 @@ async fn main() -> anyhow::Result<()> {
                 guard,
                 client,
                 upstream_base: opt.upstream.clone(),
-                provider,
+                provider: Arc::new(provider),
                 inspectors: chosen_inspectors.clone(),
                 redaction: redaction.clone(),
             });

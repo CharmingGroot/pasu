@@ -28,6 +28,68 @@ pub enum Provider {
     Gemini,
 }
 
+/// A provider's wire format: how to find tool calls in a response, and where a
+/// person's text sits in a request.
+///
+/// The proxy is deliberately blind to which formats exist. [`Provider`] is the
+/// set this repository ships, and it is one implementation of this trait rather
+/// than the definition of what a format can be — an in-house gateway with its
+/// own shape implements this and is a first-class citizen, without editing an
+/// enum here and without a fork.
+pub trait WireFormat: Send + Sync {
+    /// For logs and errors. Not parsed by anything.
+    fn name(&self) -> &str;
+
+    /// Tool calls in a whole (non-streaming) response body.
+    ///
+    /// `None` means this is not a body the format recognises. The proxy treats
+    /// that as "nothing to guard here", not as "allowed" — the kernel layer is
+    /// what covers a path this cannot read.
+    fn tool_calls(&self, body: &[u8]) -> Option<Vec<ToolCall>>;
+
+    /// Tool calls reassembled from an SSE stream body.
+    fn tool_calls_streaming(&self, body: &[u8]) -> Option<Vec<ToolCall>>;
+
+    /// Visit every piece of human-authored text in a **request** body.
+    ///
+    /// Returning `Some(replacement)` from `f` writes it back, which is how
+    /// redaction works. One method for both reading and rewriting on purpose:
+    /// two that decided separately which fields hold prose would drift, and the
+    /// day they did, a scanner would be reading a field the redactor no longer
+    /// edits.
+    fn visit_prompt(
+        &self,
+        value: &mut serde_json::Value,
+        f: &mut dyn FnMut(&str) -> Option<String>,
+    ) -> Option<()>;
+}
+
+impl WireFormat for Provider {
+    fn name(&self) -> &str {
+        match self {
+            Provider::OpenAi => "openai",
+            Provider::Anthropic => "anthropic",
+            Provider::Gemini => "gemini",
+        }
+    }
+
+    fn tool_calls(&self, body: &[u8]) -> Option<Vec<ToolCall>> {
+        extract(body, *self)
+    }
+
+    fn tool_calls_streaming(&self, body: &[u8]) -> Option<Vec<ToolCall>> {
+        crate::stream::extract_stream(body, *self)
+    }
+
+    fn visit_prompt(
+        &self,
+        value: &mut serde_json::Value,
+        f: &mut dyn FnMut(&str) -> Option<String>,
+    ) -> Option<()> {
+        crate::prompt::visit(value, *self, f)
+    }
+}
+
 /// Extract the tool calls from a response body.
 ///
 /// - `Some(calls)` — the body parsed as a known response; `calls` may be empty

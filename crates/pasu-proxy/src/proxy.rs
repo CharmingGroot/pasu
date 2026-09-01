@@ -16,9 +16,9 @@ use axum::{
 use pasu_core::{Approver, Guard, Inspector, RuleEngine, Verdict};
 
 use crate::inspect::inspect;
-use crate::parse::{extract, Provider};
+use crate::parse::WireFormat;
 use crate::prompt::{prompt_text, rewrite_prompt};
-use crate::stream::{extract_stream, is_event_stream};
+use crate::stream::is_event_stream;
 use pasu_core::redact::{redact, Action, Policy as RedactionPolicy};
 
 /// Shared proxy state: the guard (policy + HITL + audit), an HTTP client, the
@@ -31,7 +31,10 @@ pub struct ProxyState<E: RuleEngine, A: Approver> {
     /// Upstream base URL, e.g. `https://api.openai.com`.
     pub upstream_base: String,
     /// Wire format to parse responses as.
-    pub provider: Provider,
+    /// The wire format to parse. A trait object, not the enum: the proxy runs a
+    /// format rather than knowing which ones exist, so an in-house shape needs
+    /// no change here.
+    pub provider: Arc<dyn WireFormat>,
     /// What reads the prompt before it leaves, if anything.
     ///
     /// Empty is the default and means the request path is forwarded untouched —
@@ -95,9 +98,9 @@ where
     // body is buffered either way, so streaming (SSE) responses are reassembled
     // and guarded just like non-streaming ones.
     let calls = if is_event_stream(upstream.content_type.as_deref()) {
-        extract_stream(&upstream.body, state.provider)
+        state.provider.tool_calls_streaming(&upstream.body)
     } else {
-        extract(&upstream.body, state.provider)
+        state.provider.tool_calls(&upstream.body)
     };
     if let Some(calls) = calls {
         if !calls.is_empty() {
@@ -140,7 +143,7 @@ where
     if state.inspectors.is_empty() {
         return Screened::Send(body);
     }
-    let Some(texts) = prompt_text(&body, state.provider) else {
+    let Some(texts) = prompt_text(&body, state.provider.as_ref()) else {
         // Not a shape this can read. The kernel layer is what covers those.
         return Screened::Send(body);
     };
@@ -169,7 +172,7 @@ where
     }
 
     let mut replaced: Vec<String> = Vec::new();
-    let rewritten = rewrite_prompt(&body, state.provider, &mut |text| {
+    let rewritten = rewrite_prompt(&body, state.provider.as_ref(), &mut |text| {
         let out = redact(text, &findings, &state.redaction)?;
         replaced.extend(out.rules);
         Some(out.text)
