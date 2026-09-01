@@ -242,6 +242,30 @@ async fn main() -> anyhow::Result<()> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// `--help` is where every flag this binary has is documented, so a build
+    /// that cannot print it makes the answer to "what can this do" be "read the
+    /// source".
+    ///
+    /// It is a *feature* question, not a code one: clap's `help` is a default
+    /// feature, and the workspace turns default features off. This test fails
+    /// with a plain `UnknownArgument` when that feature is missing, which is
+    /// exactly what shipped.
+    #[test]
+    fn help_is_actually_available() {
+        let error = Opt::try_parse_from(["pasu-proxy", "--help"])
+            .expect_err("--help exits rather than parsing");
+
+        assert_eq!(
+            error.kind(),
+            clap::error::ErrorKind::DisplayHelp,
+            "--help must print help, not fail as an unknown argument"
+        );
+        assert!(
+            error.to_string().contains("--upstream"),
+            "the flags belong in the help text: {error}"
+        );
+    }
     use pasu_core::{Event, EventKind, Verdict};
     use std::sync::atomic::{AtomicUsize, Ordering};
 
