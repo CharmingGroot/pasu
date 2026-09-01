@@ -269,7 +269,7 @@ docker build -f deploy/Dockerfile -t pasu-egress:latest .
 |-------|------|
 | `pasu-core` | 공유 타입(`Event` / `Verdict` / `Finding`)과 trait(`RuleEngine` · `Layer` · `Approver` · `AuditSink` · `Inspector`), 그리고 `Guard` 파사드 |
 | `pasu-rules` | `RuleEngine` — Falco에서 영향받은 YAML 룰셋(allow/deny/ask, 기본 fail-closed) |
-| `pasu-proxy` | LLM-API 리버스 프록시 — provider 응답(OpenAI…)의 도구 호출을 파싱해 같은 `Guard`로 가드; 프레임워크 무관(`base_url`만) |
+| `pasu-proxy` | LLM-API 리버스 프록시 — 응답의 도구 호출과 요청의 프롬프트를 같은 `Guard`로 가드; 프레임워크 무관(`base_url`만). wire format은 `WireFormat` trait이라 사내 자체 포맷도 포크 없이 꽂힙니다 |
 | `pasu-ui` | 경량 웹 UI — HITL 승인(`/`)과 감사·egress 대시보드(`/audit`, `/egress`) |
 | `pasu-audit` | 감사 sink — JSONL(stderr/파일/SIEM), 인메모리, OpenTelemetry(OTLP 스팬, `otel` feature) |
 | `pasu-egress` · `pasu-ebpf` · `pasu-ebpf-common` | 커널 eBPF cgroup egress — 기본 차단 allowlist, DNS 인식 (Linux) |

@@ -126,7 +126,7 @@ fn proxy_app_with(
         ),
         client: reqwest::Client::new(),
         upstream_base,
-        provider: Provider::OpenAi,
+        provider: Arc::new(Provider::OpenAi),
         inspectors,
         redaction,
     });

@@ -73,7 +73,7 @@ fn proxy_with_ui(upstream_base: String) -> (Router, pasu_ui::AppState) {
         ),
         client: reqwest::Client::new(),
         upstream_base,
-        provider: Provider::OpenAi,
+        provider: Arc::new(Provider::OpenAi),
         inspectors: Vec::new(),
         redaction: Default::default(),
     });
@@ -168,7 +168,7 @@ async fn ask_without_a_decision_fails_closed() {
         ),
         client: reqwest::Client::new(),
         upstream_base: upstream,
-        provider: Provider::OpenAi,
+        provider: Arc::new(Provider::OpenAi),
         inspectors: Vec::new(),
         redaction: Default::default(),
     });

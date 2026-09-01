@@ -322,7 +322,7 @@ Sidecar ([`deploy/docker-compose.yml`](deploy/docker-compose.yml)) and Kubernete
 |-------|------|
 | `pasu-core` | shared types (`Event` / `Verdict` / `Finding`) + traits (`RuleEngine` · `Layer` · `Approver` · `AuditSink` · `Inspector`) |
 | `pasu-rules` | `RuleEngine` — Falco-inspired YAML ruleset (allow/deny/ask, default fail-closed) |
-| `pasu-proxy` | LLM-API reverse proxy — parses tool calls from provider responses (OpenAI…) and guards them via the same `Guard`; framework-agnostic (`base_url` only) |
+| `pasu-proxy` | LLM-API reverse proxy — guards tool calls in responses and prompts in requests through the same `Guard`; framework-agnostic (`base_url` only). The wire format is a `WireFormat` trait, so an in-house shape plugs in without a fork |
 | `pasu-ui` | lightweight web UI — HITL approvals (`/`) + audit dashboard (`/audit`) |
 | `pasu-audit` | audit sinks — JSONL (stderr / file / SIEM), in-memory, and OpenTelemetry (OTLP spans, `otel` feature) |
 | `pasu-egress` · `pasu-ebpf` · `pasu-ebpf-common` | kernel eBPF cgroup egress — default-deny allowlist, DNS-aware (Linux) |

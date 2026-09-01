@@ -48,6 +48,7 @@ neither is privileged in the design.
 | enforce somewhere new | `Layer` | `pasu-egress` |
 | send decisions elsewhere | `AuditSink` | `pasu-audit` |
 | ask a human | `Approver` | `pasu-ui` |
+| speak a provider's wire format | `WireFormat` | `Provider` (the built-ins) |
 
 ### An inspector
 
@@ -67,6 +68,33 @@ Two rules that are not negotiable:
 
 Hand it to `ProxyState.inspectors` and you are done. Nothing in the proxy has to
 learn your scanner's name.
+
+### A wire format
+
+`Provider` is the set this repository ships. It is **one implementation** of
+`WireFormat`, not the definition of what a format can be — an in-house gateway
+with its own shape implements the trait and is a first-class citizen:
+
+```rust
+impl WireFormat for HouseFormat {
+    fn name(&self) -> &str { "house" }
+    fn tool_calls(&self, body: &[u8]) -> Option<Vec<ToolCall>> { … }
+    fn tool_calls_streaming(&self, body: &[u8]) -> Option<Vec<ToolCall>> { … }
+    fn visit_prompt(&self, value: &mut Value, f: &mut …) -> Option<()> { … }
+}
+```
+
+Hand it to `ProxyState.provider` as an `Arc<dyn WireFormat>`. No enum variant,
+no edit inside the proxy, no fork.
+
+`visit_prompt` covers both reading and rewriting deliberately. Two methods that
+decided separately which fields hold prose would drift, and the day they did, a
+scanner would be reading a field the redactor no longer edits.
+
+`tests/custom_wire_format.rs` drives a format defined outside `parse.rs` all the
+way through the proxy — tool-call guarding and request inspection both — written
+the way an outside adapter has to be written, so the seam regressing breaks a
+test rather than someone's fork.
 
 ## Adapters are separate crates on purpose
 
