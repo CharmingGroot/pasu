@@ -6,6 +6,55 @@ All notable changes to pasu are documented here. The format follows
 
 ## [Unreleased]
 
+### Added
+
+- **The proxy inspects requests, not only responses.** It forwarded every
+  request untouched, so a prompt carrying whatever an agent had just read out of
+  a file or a database row reached the provider unexamined. The kernel layer
+  cannot cover that path — it must permit the provider's address or the agent
+  cannot work, and past the handshake the payload is TLS — which makes the
+  request body the only place the content is readable.
+  ([#94](https://github.com/CharmingGroot/pasu/issues/94))
+- **`pasu_core::Inspector`**, the plugin point for content checks. A scanner
+  attaches without a layer changing. It returns **findings rather than
+  verdicts**: what was found and where, leaving the layer to decide whether that
+  means a refusal or, later, a redaction. An inspector that answered
+  allow-or-deny would already have discarded the spans a redactor needs.
+  `Finding` never carries the matched value.
+- **`pasu-inspect-presidio`** — reads Presidio recognizer YAML as an
+  `Inspector`. There is no interchange standard for PII rules, and this is not
+  one; it reads the format people have already exported. Score, context words,
+  Python-only regex and checksums do not survive the trip, and each is reported
+  by name with its reason rather than dropped. Loading is fail-closed: a file
+  containing anything unusable is an error, because an operator holding half a
+  rule set and believing it whole is worse off than one who got an error.
+  ([#96](https://github.com/CharmingGroot/pasu/issues/96))
+- `pasu-pii-kr` is now reachable from the proxy behind `--block-pii-kr`. It
+  existed, was tested, shipped rules — and was called by nothing.
+
+### Fixed
+
+- **No binary could print its own help.** `--help` answered `error: unexpected
+  argument found`. clap's `help` and `usage` are default features and the
+  workspace turns defaults off, naming only `std`, so `--help` was not a flag at
+  all. Every flag these binaries have is documented only there, which made the
+  answer to "what can this do" be "read the source". `error-context` came with
+  the fix, so a missing required argument now names which one. All three
+  binaries carry a test for it.
+  ([#97](https://github.com/CharmingGroot/pasu/issues/97))
+
+### Known gaps
+
+- **Blocking only, no masking.** A match refuses the request; redacting a value
+  and sending the rest does not exist yet. `Finding` carries spans so it can be
+  built without changing the trait, but the choice between one-way redaction and
+  reversible substitution is a design decision, not an implementation detail.
+- **Detection is regex and checksums.** No NER model runs — a path executing per
+  message cannot afford one — so PII without a pattern, such as a person's name,
+  is not caught.
+- Content inspection sees only request shapes the proxy parses. A body that does
+  not parse is forwarded untouched.
+
 ## [0.2.0] - 2026-08-26
 
 Hardening release. A cross-cutting audit — walking each concern across every

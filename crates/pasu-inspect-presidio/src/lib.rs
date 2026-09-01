@@ -142,11 +142,12 @@ impl fmt::Display for Error {
                 for item in skipped {
                     writeln!(f, "  {} — {}", item.recognizer, item.reason)?;
                 }
-                write!(
-                    f,
-                    "Fix or remove them, or call `read_lossy` to accept the gap \
-                     knowingly."
-                )
+                // No remedy is named here on purpose. This type is read by a
+                // library caller and by an operator holding a CLI, and the two
+                // have different moves available: one can call `read_lossy`, the
+                // other can only change a flag or the file. Naming either would
+                // be advice the other cannot take, so each caller adds its own.
+                Ok(())
             }
         }
     }

@@ -99,9 +99,15 @@ fn inspectors(opt: &Opt) -> anyhow::Result<Vec<Arc<dyn pasu_core::Inspector>>> {
         // Refuse a partial load. An operator who believes a rule file is in
         // force, and is holding half of it, is worse off than one who got an
         // error at startup.
-        let rules = import
-            .read(&yaml, "presidio")
-            .with_context(|| format!("import presidio rules {}", path.display()))?;
+        let rules = import.read(&yaml, "presidio").with_context(|| {
+            format!(
+                "import presidio rules {}\n\nEither remove those recognizers from \
+                 the file, or lower --presidio-min-score (currently {}) if you \
+                 accept that a weaker pattern will match more ordinary text.",
+                path.display(),
+                opt.presidio_min_score
+            )
+        })?;
         eprintln!("pasu-proxy: {} presidio pattern(s) loaded", rules.len());
         chosen.push(Arc::new(rules));
     }
