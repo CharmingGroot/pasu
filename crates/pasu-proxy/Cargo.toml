@@ -16,6 +16,7 @@ path = "src/main.rs"
 
 [dependencies]
 pasu-core = { path = "../pasu-core" }
+pasu-pii-kr = { path = "../pasu-pii-kr" }
 axum = "0.7"
 reqwest = { version = "0.13", default-features = false, features = ["rustls"] }
 tokio = { workspace = true, features = ["rt-multi-thread", "macros", "net"] }

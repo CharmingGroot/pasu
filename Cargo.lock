@@ -1409,6 +1409,7 @@ dependencies = [
  "clap",
  "criterion",
  "pasu-core",
+ "pasu-pii-kr",
  "pasu-rules",
  "pasu-ui",
  "reqwest",
