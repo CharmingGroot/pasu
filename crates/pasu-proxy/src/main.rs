@@ -50,6 +50,7 @@ struct Opt {
     /// exposure to these patterns should not have an agent stopped mid-task by a
     /// false positive it did not ask for.
     #[clap(long)]
+    #[cfg(feature = "pii-kr")]
     block_pii_kr: bool,
     /// Load Presidio recognizer YAML and inspect requests with it.
     ///
@@ -58,6 +59,7 @@ struct Opt {
     /// words, Python-only regex — is reported by name, and a file with anything
     /// unusable is refused rather than half-loaded.
     #[clap(long, value_name = "PATH")]
+    #[cfg(feature = "presidio")]
     presidio_rules: Option<std::path::PathBuf>,
     /// The lowest Presidio pattern score to import.
     ///
@@ -65,6 +67,7 @@ struct Opt {
     /// there; nothing raises them here, so a low value imports patterns that
     /// fire on ordinary text.
     #[clap(long, default_value_t = 0.5)]
+    #[cfg(feature = "presidio")]
     presidio_min_score: f64,
     /// Replace what an inspector finds instead of refusing the request.
     ///
@@ -109,11 +112,11 @@ struct Opt {
 /// done. It is wrong when prompts are being altered on their way out: a model
 /// answering about text the operator never wrote, with nothing in the log
 /// saying why, is a debugging trap.
-fn redaction_policy(opt: &Opt) -> pasu_proxy::redact::Policy {
+fn redaction_policy(opt: &Opt) -> pasu_core::redact::Policy {
     let mut policy = if opt.redact {
-        pasu_proxy::redact::Policy::redact_everything()
+        pasu_core::redact::Policy::redact_everything()
     } else {
-        pasu_proxy::redact::Policy::block_everything()
+        pasu_core::redact::Policy::block_everything()
     };
     for rule in &opt.redact_rule {
         policy = policy.redacting(rule);
@@ -142,11 +145,24 @@ fn redaction_policy(opt: &Opt) -> pasu_proxy::redact::Policy {
     policy
 }
 
+/// The inspectors this build was compiled with and this run asked for.
+///
+/// The proxy does not know what an inspector is beyond the trait. The two here
+/// are behind features because shipping them is a packaging choice, not part of
+/// what the proxy is — anyone adapting pasu to a scanner this repository has
+/// never heard of implements [`pasu_core::Inspector`] and hands it to
+/// `ProxyState`, without touching this function.
+#[allow(unused_variables)]
 fn inspectors(opt: &Opt) -> anyhow::Result<Vec<Arc<dyn pasu_core::Inspector>>> {
+    #[allow(unused_mut)]
     let mut chosen: Vec<Arc<dyn pasu_core::Inspector>> = Vec::new();
+
+    #[cfg(feature = "pii-kr")]
     if opt.block_pii_kr {
-        chosen.push(Arc::new(pasu_proxy::inspectors::PiiKr::builtin()));
+        chosen.push(Arc::new(pasu_inspect_pii_kr::PiiKr::builtin()));
     }
+
+    #[cfg(feature = "presidio")]
     if let Some(path) = &opt.presidio_rules {
         let yaml = std::fs::read_to_string(path)
             .with_context(|| format!("read presidio rules {}", path.display()))?;

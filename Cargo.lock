@@ -1392,6 +1392,14 @@ dependencies = [
 ]
 
 [[package]]
+name = "pasu-inspect-pii-kr"
+version = "0.2.0"
+dependencies = [
+ "pasu-core",
+ "pasu-pii-kr",
+]
+
+[[package]]
 name = "pasu-inspect-presidio"
 version = "0.2.0"
 dependencies = [
@@ -1419,8 +1427,8 @@ dependencies = [
  "clap",
  "criterion",
  "pasu-core",
+ "pasu-inspect-pii-kr",
  "pasu-inspect-presidio",
- "pasu-pii-kr",
  "pasu-rules",
  "pasu-ui",
  "reqwest",

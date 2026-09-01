@@ -117,7 +117,7 @@ fn proxy_app_with_inspectors(
 fn proxy_app_with(
     upstream_base: String,
     inspectors: Vec<Arc<dyn pasu_core::Inspector>>,
-    redaction: pasu_proxy::redact::Policy,
+    redaction: pasu_core::redact::Policy,
 ) -> Router {
     let state = Arc::new(ProxyState {
         guard: Guard::new(
@@ -237,7 +237,7 @@ async fn a_prompt_carrying_pii_never_reaches_the_provider() {
     let upstream = spawn_mock_upstream().await;
     let app = proxy_app_with_inspectors(
         upstream,
-        vec![Arc::new(pasu_proxy::inspectors::PiiKr::builtin())],
+        vec![Arc::new(pasu_inspect_pii_kr::PiiKr::builtin())],
     );
 
     let response = app
@@ -267,7 +267,7 @@ async fn an_ordinary_prompt_still_reaches_the_provider() {
     let upstream = spawn_mock_upstream().await;
     let app = proxy_app_with_inspectors(
         upstream,
-        vec![Arc::new(pasu_proxy::inspectors::PiiKr::builtin())],
+        vec![Arc::new(pasu_inspect_pii_kr::PiiKr::builtin())],
     );
 
     let response = app
@@ -304,8 +304,8 @@ async fn a_redacted_prompt_reaches_the_provider_without_the_value() {
     let (upstream, seen) = spawn_recording_upstream().await;
     let app = proxy_app_with(
         upstream,
-        vec![Arc::new(pasu_proxy::inspectors::PiiKr::builtin())],
-        pasu_proxy::redact::Policy::redact_everything(),
+        vec![Arc::new(pasu_inspect_pii_kr::PiiKr::builtin())],
+        pasu_core::redact::Policy::redact_everything(),
     );
 
     let response = app
@@ -344,8 +344,8 @@ async fn a_blocked_rule_still_refuses_even_when_redaction_is_on() {
     let (upstream, seen) = spawn_recording_upstream().await;
     let app = proxy_app_with(
         upstream,
-        vec![Arc::new(pasu_proxy::inspectors::PiiKr::builtin())],
-        pasu_proxy::redact::Policy::redact_everything().blocking("ko-rrn"),
+        vec![Arc::new(pasu_inspect_pii_kr::PiiKr::builtin())],
+        pasu_core::redact::Policy::redact_everything().blocking("ko-rrn"),
     );
 
     let response = app
@@ -367,8 +367,8 @@ async fn every_occurrence_is_replaced() {
     let (upstream, seen) = spawn_recording_upstream().await;
     let app = proxy_app_with(
         upstream,
-        vec![Arc::new(pasu_proxy::inspectors::PiiKr::builtin())],
-        pasu_proxy::redact::Policy::redact_everything(),
+        vec![Arc::new(pasu_inspect_pii_kr::PiiKr::builtin())],
+        pasu_core::redact::Policy::redact_everything(),
     );
 
     let _ = app

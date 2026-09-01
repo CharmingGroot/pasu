@@ -276,9 +276,11 @@ docker build -f deploy/Dockerfile -t pasu-egress:latest .
 | `pasu-daemon` | composition root — 정책 YAML을 커널 가드로 변환(정책 하나로 양 계층) |
 | `pasu-cli` | `pasu` 명령 — `pasu run`으로 어떤 에이전트든 가드된 cgroup에 감쌈 |
 | `pasu-pii-kr` | 한국 PII 탐지(정규식 + 주민번호·사업자번호·Luhn 체크섬). 다른 pasu 크레이트에 의존하지 않아 pasu를 모르는 게이트웨이도 쓸 수 있습니다 |
-| `pasu-inspect-presidio` | Presidio recognizer YAML을 읽어 `Inspector`로 씀 — 남들이 이미 export한 룰을 그대로 |
+| `pasu-inspect-pii-kr` · `pasu-inspect-presidio` | 어댑터. 스캐너를 `Inspector`로 이어 붙입니다. 프록시는 이 둘을 **feature로만** 당겨쓰므로, 원하지 않으면 컴파일되지 않습니다 |
 
 모든 crate는 `pasu-core`에만 의존합니다(순환 없음). 룰 포맷과 프레임워크 통합은 trait 뒤에 있어 교체할 수 있습니다.
+
+어느 이음매에 무엇을 구현하면 되는지는 [docs/adapting.md](docs/adapting.md)에 있습니다.
 
 ## 의존성
 

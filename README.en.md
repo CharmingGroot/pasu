@@ -327,7 +327,7 @@ Sidecar ([`deploy/docker-compose.yml`](deploy/docker-compose.yml)) and Kubernete
 | `pasu-audit` | audit sinks — JSONL (stderr / file / SIEM), in-memory, and OpenTelemetry (OTLP spans, `otel` feature) |
 | `pasu-egress` · `pasu-ebpf` · `pasu-ebpf-common` | kernel eBPF cgroup egress — default-deny allowlist, DNS-aware (Linux) |
 | `pasu-pii-kr` | Korean PII detection (regex + RRN / BRN / Luhn checksums). Depends on no other pasu crate, so a gateway that has never heard of pasu can use it |
-| `pasu-inspect-presidio` | reads Presidio recognizer YAML as an `Inspector` — the rules people have already exported |
+| `pasu-inspect-pii-kr` · `pasu-inspect-presidio` | adapters. They attach a scanner as an `Inspector`. The proxy pulls them in **by feature only**, so a build that wants neither compiles neither |
 | `pasu-daemon` | composition root — lowers the policy YAML to the kernel guard (one policy, both layers) |
 | `pasu-cli` | the `pasu` command — `pasu run` wraps any agent command in a guarded cgroup |
 

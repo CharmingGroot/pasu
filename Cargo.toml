@@ -1,7 +1,8 @@
 [workspace]
 resolver = "2"
 members = [
-    "crates/pasu-core",    "crates/pasu-rules",
+    "crates/pasu-core",
+    "crates/pasu-rules",
     "crates/pasu-ui",
     "crates/pasu-audit",
     "crates/pasu-ebpf-common",
@@ -11,17 +12,20 @@ members = [
     "crates/pasu-cli",
     "crates/pasu-proxy",
     "crates/pasu-pii-kr",
+    "crates/pasu-inspect-pii-kr",
     "crates/pasu-inspect-presidio",
 ]
 # The eBPF stack needs nightly + bpf-linker + a Linux/bpf target, so it is kept
 # out of default-members: `cargo build/test` and CI (stable) only touch the
 # portable crates. Build the eBPF stack explicitly on Linux (see crates/pasu-egress).
 default-members = [
-    "crates/pasu-core",    "crates/pasu-rules",
+    "crates/pasu-core",
+    "crates/pasu-rules",
     "crates/pasu-ui",
     "crates/pasu-audit",
     "crates/pasu-proxy",
     "crates/pasu-pii-kr",
+    "crates/pasu-inspect-pii-kr",
     "crates/pasu-inspect-presidio",
 ]
 
