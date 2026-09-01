@@ -61,7 +61,10 @@ pasu는 이 제약 안에서 동작하도록 만들었습니다. Linux 호스트
 - **Linux 전용** — eBPF 커널 강제는 Linux에서만 동작합니다. macOS·Windows는 협조 계층(LLM-API 프록시)만 지원하며 커널 egress 강제가 없습니다.
 - **커널 권한 필요** — eBPF attach에 root 또는 CAP_BPF가 필요합니다(프록시 계층은 무권한).
 - **프록시 계층 단독 우회 가능** — 도구가 자체 소켓으로 직접 연결하면 프록시가 보지 못합니다. 이 경우는 커널 계층이 차단합니다.
-- **L3/L4 수준 egress 제어** — IP·도메인 단위이며 TLS 페이로드나 L7 콘텐츠(DLP)는 검사하지 않습니다. 허용된 도메인으로의 유출은 allowlist로 막지 못합니다.
+- **커널 계층은 L3/L4** — IP·도메인 단위이며 TLS 페이로드는 볼 수 없습니다. 허용된 도메인으로의 유출은 allowlist로 막지 못합니다. 그 경로의 내용 검사는 프록시 계층이 맡습니다(아래).
+- **내용 검사는 프록시가 아는 요청 형태에서만** — `Inspector`는 provider별로 파싱한 프롬프트 텍스트를 봅니다. 파싱되지 않는 본문은 그대로 통과하며, 도구가 프록시를 우회해 직접 보내는 트래픽은 커널 계층이 주소로만 막습니다.
+- **탐지는 정규식·체크섬** — NER 모델을 돌리지 않습니다. 메시지마다 실행되는 경로라 감당할 수 없고, 그래서 사람 이름처럼 패턴이 없는 PII는 잡지 못합니다.
+- **차단만, 마스킹 없음** — 걸리면 요청을 막습니다. 값을 가리고 보내는 기능은 아직 없습니다(`Finding`이 span을 싣고 있어 뒤에 얹을 수 있게는 해 두었습니다).
 - **스트리밍은 버퍼링 후 전달** — SSE 응답의 도구 호출도 재조립해 검사하지만, 전체 스트림을 받아 검사한 뒤 한 번에 전달합니다(증분 릴레이 없음). DNS 인식은 best-effort입니다.
 - **입력 계층 방어 아님** — 프롬프트 인젝션이나 모델 오작동은 다루지 않습니다. pasu는 egress와 도구 의도에 대한 최종 방어선입니다.
 - **초기 단계(MVP)** — 보안 인증과 프로덕션 도입 사례가 없습니다.
@@ -169,6 +172,60 @@ pasu_ui::serve_all(addr, approvals, feed, Some(egress)).await?;   // + /egress
 cargo run -p pasu-ui --example ui_demo   # http://127.0.0.1:8787/egress
 ```
 
+## 요청 검사 (PII·시크릿)
+
+프록시는 응답의 도구 호출만 보던 계층이었습니다. 지금은 **요청이 나가기 전에도** 봅니다.
+그 자리여야 하는 이유는 하나입니다 — 커널 계층은 provider 주소를 허용해야 에이전트가
+동작하고, 그 뒤는 TLS라 내용이 보이지 않습니다. **요청 본문이 내용을 읽을 수 있는
+유일한 지점**입니다.
+
+```bash
+# 내장 한국 PII 규칙으로 검사
+pasu-proxy --policy policy.yaml --upstream https://api.openai.com --block-pii-kr
+
+# 이미 갖고 있는 Presidio recognizer YAML로 검사
+pasu-proxy --policy policy.yaml --upstream https://api.openai.com \
+  --presidio-rules ./recognizers.yaml --presidio-min-score 0.5
+```
+
+기본은 꺼져 있습니다. 이 패턴에 노출이 없는 배포에서 오탐으로 에이전트가 멈추는 편이
+더 나쁩니다.
+
+### 붙이는 방식
+
+검사기는 레이어를 고치지 않고 붙습니다. `pasu-core`의 trait 하나입니다.
+
+```rust
+pub trait Inspector: Send + Sync {
+    fn name(&self) -> &str;
+    fn inspect(&self, text: &str) -> Vec<Finding>;
+}
+```
+
+**판정이 아니라 finding을 냅니다.** 무엇을 어디서 찾았는지만 말하고, 그게 차단인지
+마스킹인지는 레이어가 정합니다. `Allow`/`Deny`로 답했다면 마스킹에 필요한 span을 이미
+버린 뒤가 됩니다.
+
+`Finding`은 **매치된 값을 싣지 않습니다.** 규칙 id와 위치뿐입니다. 잡은 값을 인용하는
+차단 메시지는 그 자체가 막으려던 유출입니다.
+
+### Presidio 룰 가져오기
+
+교환 표준은 없습니다. Presidio YAML도 Presidio 것이지 규격이 아닙니다. 그래서 새 포맷을
+만들지 않고 **사람들이 이미 export한 것을 읽습니다.**
+
+넘어오지 못하는 것이 넷이고, 전부 이름과 이유를 붙여 보고합니다.
+
+| | 왜 |
+|---|---|
+| score | Presidio는 0.01짜리 약한 패턴도 배포합니다(context가 점수를 올려주니까). 여기엔 점수가 없고 finding 하나면 차단이라, 임계값 없이 가져오면 평범한 문장에 걸립니다 |
+| context words | 올릴 수단이 없어 임포트된 패턴은 Presidio에서보다 **더** 오탐이 잦습니다 |
+| 정규식 방언 | Python `re` → Rust `regex`. 백트래킹이 없어 ReDoS가 없는 대신 lookaround·backreference는 컴파일되지 않습니다 |
+| 체크섬 | Python 검증 로직은 넘어오지 않습니다 |
+
+**로딩은 fail-closed입니다.** 못 읽는 recognizer가 하나라도 있으면 에러입니다. 절반만
+읽고 성공을 보고하면 운영자가 "커버된다"고 믿게 되고, 그건 거부당하는 것보다 나쁩니다.
+
 ## 컨테이너로 실행
 
 커널 가드는 다른 eBPF 도구와 똑같이 컨테이너로 돌아갑니다 — `CAP_BPF` + `CAP_NET_ADMIN`과 cgroup v2 마운트만 있으면 됩니다. 빠르게 확인해 보기(`1.1.1.1`만 허용하고, 앱이 뭘 하든 나머지는 커널이 drop):
@@ -188,7 +245,7 @@ docker build -f deploy/Dockerfile -t pasu-egress:latest .
 
 | crate | 역할 |
 |-------|------|
-| `pasu-core` | 공유 타입(`Event` / `Verdict`)과 trait(`RuleEngine` · `Layer` · `Approver` · `AuditSink`), 그리고 `Guard` 파사드 |
+| `pasu-core` | 공유 타입(`Event` / `Verdict` / `Finding`)과 trait(`RuleEngine` · `Layer` · `Approver` · `AuditSink` · `Inspector`), 그리고 `Guard` 파사드 |
 | `pasu-rules` | `RuleEngine` — Falco에서 영향받은 YAML 룰셋(allow/deny/ask, 기본 fail-closed) |
 | `pasu-proxy` | LLM-API 리버스 프록시 — provider 응답(OpenAI…)의 도구 호출을 파싱해 같은 `Guard`로 가드; 프레임워크 무관(`base_url`만) |
 | `pasu-ui` | 경량 웹 UI — HITL 승인(`/`)과 감사·egress 대시보드(`/audit`, `/egress`) |
@@ -196,6 +253,8 @@ docker build -f deploy/Dockerfile -t pasu-egress:latest .
 | `pasu-egress` · `pasu-ebpf` · `pasu-ebpf-common` | 커널 eBPF cgroup egress — 기본 차단 allowlist, DNS 인식 (Linux) |
 | `pasu-daemon` | composition root — 정책 YAML을 커널 가드로 변환(정책 하나로 양 계층) |
 | `pasu-cli` | `pasu` 명령 — `pasu run`으로 어떤 에이전트든 가드된 cgroup에 감쌈 |
+| `pasu-pii-kr` | 한국 PII 탐지(정규식 + 주민번호·사업자번호·Luhn 체크섬). 다른 pasu 크레이트에 의존하지 않아 pasu를 모르는 게이트웨이도 쓸 수 있습니다 |
+| `pasu-inspect-presidio` | Presidio recognizer YAML을 읽어 `Inspector`로 씀 — 남들이 이미 export한 룰을 그대로 |
 
 모든 crate는 `pasu-core`에만 의존합니다(순환 없음). 룰 포맷과 프레임워크 통합은 trait 뒤에 있어 교체할 수 있습니다.
 

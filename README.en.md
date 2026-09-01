@@ -79,7 +79,10 @@ Tool-call guard, kernel egress, and audit on a single self-hosted box:
 - **Linux only** — eBPF kernel enforcement runs on Linux. macOS/Windows support the cooperative layer (the LLM-API proxy) only, with no kernel egress enforcement.
 - **Requires kernel privileges** — the eBPF layer needs root or CAP_BPF (the proxy layer runs unprivileged).
 - **Proxy layer is bypassable on its own** — a tool that opens its own socket is invisible to the proxy; the kernel layer covers that case.
-- **L3/L4 egress control** — IP/domain level, with no TLS-payload or L7 content (DLP) inspection. Exfiltration to an already-allowed domain is not stopped by the allowlist.
+- **The kernel layer is L3/L4** — IP/domain level, and it cannot see inside TLS. Exfiltration to an already-allowed domain is not stopped by the allowlist; content inspection on that path is the proxy layer's job (below).
+- **Content inspection only sees request shapes the proxy parses** — an `Inspector` reads prompt text extracted per provider. A body that does not parse is forwarded untouched, and traffic a tool sends without going through the proxy is bounded by address alone at the kernel layer.
+- **Detection is regex and checksums** — no NER model runs. A path that executes per message cannot afford one, so PII without a pattern (a person's name) is not caught.
+- **Blocking only, no masking** — a match refuses the request. Redacting a value and sending the rest does not exist yet, though `Finding` carries spans so it can be built on top.
 - **Streaming is buffered** — SSE tool calls are reassembled and inspected, but the full stream is buffered and relayed at once (no incremental relay). DNS-awareness is best-effort.
 - **Not an input-layer defense** — prompt injection and model misbehavior are out of scope. pasu is a last line of defense over egress and tool intent.
 - **Early stage (MVP)** — no security certification, no production references.
@@ -212,6 +215,63 @@ Try it without a kernel (mock guard socket):
 cargo run -p pasu-ui --example ui_demo   # http://127.0.0.1:8787/egress
 ```
 
+## Request inspection (PII, secrets)
+
+The proxy used to inspect only the tool calls in a provider's response. It now
+also inspects the request **before it leaves**, and that is the only place it
+can: the kernel layer must permit the provider's address or the agent cannot
+work at all, and past the handshake the payload is TLS. **The request body is
+the only place the content is readable.**
+
+```bash
+# with the built-in Korean PII rules
+pasu-proxy --policy policy.yaml --upstream https://api.openai.com --block-pii-kr
+
+# with Presidio recognizer YAML you already have
+pasu-proxy --policy policy.yaml --upstream https://api.openai.com \
+  --presidio-rules ./recognizers.yaml --presidio-min-score 0.5
+```
+
+Off by default. A deployment with no exposure to these patterns is worse off
+having an agent stopped mid-task by a false positive it did not ask for.
+
+### How something attaches
+
+An inspector plugs in without a layer changing. One trait, in `pasu-core`:
+
+```rust
+pub trait Inspector: Send + Sync {
+    fn name(&self) -> &str;
+    fn inspect(&self, text: &str) -> Vec<Finding>;
+}
+```
+
+**Findings, not verdicts.** An inspector says what it found and where; whether
+that means a refusal or a redaction is the layer's decision. One that answered
+allow-or-deny would already have thrown away the spans a redactor needs.
+
+A `Finding` **never carries the matched value** — only a rule id and a span. A
+block message that quotes what it caught is the leak it was meant to stop.
+
+### Importing Presidio rules
+
+There is no interchange standard; Presidio's YAML is Presidio's, not a spec. So
+rather than inventing a format and hoping, this reads **what people have already
+exported**.
+
+Four things do not survive, and each is reported by name with its reason:
+
+| | why |
+|---|---|
+| score | Presidio ships patterns as weak as `0.01` because context words raise them. There is no score here and one finding refuses the request, so importing without a threshold fires on ordinary text |
+| context words | nothing raises a weak pattern here, so an imported one is *more* false-positive-prone than it was in Presidio |
+| regex dialect | Python `re` → Rust `regex`. No backtracking means no ReDoS on a per-message path, and it means lookaround and backreferences do not compile |
+| checksums | validation logic written in Python does not cross |
+
+**Loading is fail-closed.** A file containing anything unusable is an error, not
+a partial success — an operator who believes a rule set is in force while holding
+half of it is worse off than one who got an error at startup.
+
 ## Run in a container
 
 The kernel guard containerizes like any eBPF tool — `CAP_BPF` + `CAP_NET_ADMIN`
@@ -235,12 +295,14 @@ Sidecar ([`deploy/docker-compose.yml`](deploy/docker-compose.yml)) and Kubernete
 
 | crate | role |
 |-------|------|
-| `pasu-core` | shared types (`Event` / `Verdict`) + traits (`RuleEngine` · `Layer` · `Approver` · `AuditSink`) |
+| `pasu-core` | shared types (`Event` / `Verdict` / `Finding`) + traits (`RuleEngine` · `Layer` · `Approver` · `AuditSink` · `Inspector`) |
 | `pasu-rules` | `RuleEngine` — Falco-inspired YAML ruleset (allow/deny/ask, default fail-closed) |
 | `pasu-proxy` | LLM-API reverse proxy — parses tool calls from provider responses (OpenAI…) and guards them via the same `Guard`; framework-agnostic (`base_url` only) |
 | `pasu-ui` | lightweight web UI — HITL approvals (`/`) + audit dashboard (`/audit`) |
 | `pasu-audit` | audit sinks — JSONL (stderr / file / SIEM), in-memory, and OpenTelemetry (OTLP spans, `otel` feature) |
 | `pasu-egress` · `pasu-ebpf` · `pasu-ebpf-common` | kernel eBPF cgroup egress — default-deny allowlist, DNS-aware (Linux) |
+| `pasu-pii-kr` | Korean PII detection (regex + RRN / BRN / Luhn checksums). Depends on no other pasu crate, so a gateway that has never heard of pasu can use it |
+| `pasu-inspect-presidio` | reads Presidio recognizer YAML as an `Inspector` — the rules people have already exported |
 | `pasu-daemon` | composition root — lowers the policy YAML to the kernel guard (one policy, both layers) |
 | `pasu-cli` | the `pasu` command — `pasu run` wraps any agent command in a guarded cgroup |
 
