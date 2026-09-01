@@ -31,6 +31,17 @@ All notable changes to pasu are documented here. The format follows
   ([#96](https://github.com/CharmingGroot/pasu/issues/96))
 - `pasu-pii-kr` is now reachable from the proxy behind `--block-pii-kr`. It
   existed, was tested, shipped rules — and was called by nothing.
+- **Redaction** (`--redact`, `--block-rule`, `--redact-rule`): replace what was
+  found and forward the rest, per rule rather than per filter. Blocking stays
+  the default, because stopping is the safe answer for a rule nobody has decided
+  about, and an explicit block beats an explicit redact — a contradiction in a
+  security policy reads as the stricter option.
+
+  **One-way.** No original is kept, so nothing can restore it and the proxy never
+  becomes a store of the data it exists to stop from moving. Reversible
+  substitution is a different security posture and deserves its own decision.
+  The placeholder preserves neither length nor shape; a mask that did would leak
+  the value it hid. ([#102](https://github.com/CharmingGroot/pasu/issues/102))
 
 ### Fixed
 
@@ -44,11 +55,6 @@ All notable changes to pasu are documented here. The format follows
   ([#97](https://github.com/CharmingGroot/pasu/issues/97))
 
 ### Known gaps
-
-- **Blocking only, no masking.** A match refuses the request; redacting a value
-  and sending the rest does not exist yet. `Finding` carries spans so it can be
-  built without changing the trait, but the choice between one-way redaction and
-  reversible substitution is a design decision, not an implementation detail.
 - **Detection is regex and checksums.** No NER model runs — a path executing per
   message cannot afford one — so PII without a pattern, such as a person's name,
   is not caught.

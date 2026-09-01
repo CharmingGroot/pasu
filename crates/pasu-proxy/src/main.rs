@@ -66,6 +66,24 @@ struct Opt {
     /// fire on ordinary text.
     #[clap(long, default_value_t = 0.5)]
     presidio_min_score: f64,
+    /// Replace what an inspector finds instead of refusing the request.
+    ///
+    /// Off by default: refusing is the safe answer for a rule nobody has decided
+    /// about. Redaction is one-way — the value is replaced with a fixed
+    /// placeholder and not kept anywhere, so nothing can restore it and this
+    /// proxy never becomes a store of the data it exists to stop.
+    #[clap(long)]
+    redact: bool,
+    /// Always refuse on this rule, even with --redact. Repeatable.
+    ///
+    /// For a rule where the right answer is to stop rather than to carry on
+    /// without it — a national ID in a prompt is usually a mistake, not a
+    /// formatting problem.
+    #[clap(long, value_name = "RULE")]
+    block_rule: Vec<String>,
+    /// Always replace this rule, even without --redact. Repeatable.
+    #[clap(long, value_name = "RULE")]
+    redact_rule: Vec<String>,
     /// Seconds to wait for the upstream TCP+TLS handshake.
     #[clap(long, default_value_t = 10)]
     connect_timeout_secs: u64,
@@ -85,6 +103,45 @@ struct Opt {
 /// Silence would be the wrong default here in both directions: an operator who
 /// passed the flag needs to see it took effect, and one who did not needs no
 /// line at all rather than a reassuring one about a check that is not running.
+/// How findings are answered, and a line saying so when it is not the default.
+///
+/// Silence is right when everything blocks — that is what the proxy has always
+/// done. It is wrong when prompts are being altered on their way out: a model
+/// answering about text the operator never wrote, with nothing in the log
+/// saying why, is a debugging trap.
+fn redaction_policy(opt: &Opt) -> pasu_proxy::redact::Policy {
+    let mut policy = if opt.redact {
+        pasu_proxy::redact::Policy::redact_everything()
+    } else {
+        pasu_proxy::redact::Policy::block_everything()
+    };
+    for rule in &opt.redact_rule {
+        policy = policy.redacting(rule);
+    }
+    // After the redact list: where an operator named the same rule twice, the
+    // stricter reading wins, and `action_for` enforces that too.
+    for rule in &opt.block_rule {
+        policy = policy.blocking(rule);
+    }
+    // Said once, and only about what is actually configured. Two lines that
+    // disagree about whether a match refuses or rewrites are worse than one.
+    if opt.redact || !opt.redact_rule.is_empty() {
+        eprintln!(
+            "pasu-proxy: a match rewrites the prompt rather than refusing it. The \
+             replacement is one-way — no original is kept, so nothing can restore it"
+        );
+        if !opt.block_rule.is_empty() {
+            eprintln!(
+                "pasu-proxy: except {}, which still refuse the request",
+                opt.block_rule.join(", ")
+            );
+        }
+    } else {
+        eprintln!("pasu-proxy: a match refuses the request");
+    }
+    policy
+}
+
 fn inspectors(opt: &Opt) -> anyhow::Result<Vec<Arc<dyn pasu_core::Inspector>>> {
     let mut chosen: Vec<Arc<dyn pasu_core::Inspector>> = Vec::new();
     if opt.block_pii_kr {
@@ -113,8 +170,8 @@ fn inspectors(opt: &Opt) -> anyhow::Result<Vec<Arc<dyn pasu_core::Inspector>>> {
     }
     for inspector in &chosen {
         eprintln!(
-            "pasu-proxy: requests are inspected by {} and refused on a match \
-             (rule ids are logged, never the matched text)",
+            "pasu-proxy: requests are inspected by {} (rule ids are logged, never the \
+             matched text)",
             inspector.name()
         );
     }
@@ -191,6 +248,7 @@ async fn main() -> anyhow::Result<()> {
     // Built once, before anything listens: a rule file that cannot be honoured
     // must stop startup rather than be discovered on the first request.
     let chosen_inspectors = inspectors(&opt)?;
+    let redaction = redaction_policy(&opt);
     // 타임아웃이 없으면 응답하지 않는 업스트림이 요청을 무한히 붙잡고,
     // 커넥션이 쌓여 프록시가 가용성 병목이 된다. 다만 전체(total) 타임아웃은
     // 긴 생성·스트리밍을 잘라내므로 연결/유휴로 나눠 건다.
@@ -221,6 +279,7 @@ async fn main() -> anyhow::Result<()> {
                 upstream_base: opt.upstream.clone(),
                 provider,
                 inspectors: chosen_inspectors.clone(),
+                redaction: redaction.clone(),
             });
             eprintln!("pasu-proxy HITL approval UI on http://{ui_addr}");
             tokio::try_join!(serve_proxy(state, &opt.listen), async {
@@ -238,6 +297,7 @@ async fn main() -> anyhow::Result<()> {
                 upstream_base: opt.upstream.clone(),
                 provider,
                 inspectors: chosen_inspectors.clone(),
+                redaction: redaction.clone(),
             });
             serve_proxy(state, &opt.listen).await?;
         }

@@ -17,7 +17,8 @@ use pasu_core::{Approver, Guard, Inspector, RuleEngine, Verdict};
 
 use crate::inspect::inspect;
 use crate::parse::{extract, Provider};
-use crate::prompt::prompt_text;
+use crate::prompt::{prompt_text, rewrite_prompt};
+use crate::redact::{redact, Action, Policy as RedactionPolicy};
 use crate::stream::{extract_stream, is_event_stream};
 
 /// Shared proxy state: the guard (policy + HITL + audit), an HTTP client, the
@@ -43,6 +44,11 @@ pub struct ProxyState<E: RuleEngine, A: Approver> {
     /// pattern. Each is a [`pasu_core::Inspector`] and none of them needs this
     /// file to change.
     pub inspectors: Vec<Arc<dyn Inspector>>,
+    /// Which findings refuse the request and which are replaced in it.
+    ///
+    /// Blocking everything is the default and is what the proxy did before
+    /// redaction existed.
+    pub redaction: RedactionPolicy,
 }
 
 /// Build the reverse-proxy router. Every path is forwarded to `upstream_base`.
@@ -74,9 +80,10 @@ where
     // Before the request leaves. Past this point the payload is TLS and the
     // kernel layer can only decide by address, so this is the last place the
     // content is readable at all.
-    if let Some(reason) = refuse_request(&state, &body) {
-        return blocked(&reason);
-    }
+    let body = match screen_request(&state, body) {
+        Screened::Send(body) => body,
+        Screened::Refuse(reason) => return blocked(&reason),
+    };
 
     let upstream = match forward_upstream(&state.client, &method, &url, &headers, body).await {
         Ok(u) => u,
@@ -114,29 +121,83 @@ where
 /// through: refusing every unrecognised body would break every endpoint that is
 /// not a completion, and the kernel layer is what covers the paths this cannot
 /// read.
-fn refuse_request<E, A>(state: &ProxyState<E, A>, body: &Bytes) -> Option<String>
+/// What screening decided: send this body, or refuse with this reason.
+enum Screened {
+    Send(Bytes),
+    Refuse(String),
+}
+
+/// Inspect the prompt, and either refuse, rewrite it, or leave it alone.
+///
+/// A blocking finding wins over a redactable one in the same request. Sending a
+/// body with one rule removed while another rule said "stop" would be answering
+/// the wrong question.
+fn screen_request<E, A>(state: &ProxyState<E, A>, body: Bytes) -> Screened
 where
     E: RuleEngine,
     A: Approver,
 {
     if state.inspectors.is_empty() {
-        return None;
+        return Screened::Send(body);
     }
-    let texts = prompt_text(body, state.provider)?;
+    let Some(texts) = prompt_text(&body, state.provider) else {
+        // Not a shape this can read. The kernel layer is what covers those.
+        return Screened::Send(body);
+    };
+
+    let mut findings = Vec::new();
     for text in &texts {
         for inspector in &state.inspectors {
-            if let Some(finding) = inspector.inspect(text).into_iter().next() {
-                // The inspector and rule ids, never the value. `Finding` carries
-                // no value for exactly this reason: a block that quotes what it
-                // caught is the leak it was meant to stop.
-                return Some(format!(
-                    "pasu-proxy blocked this request: its prompt matched {}/{} and was not sent",
-                    finding.inspector, finding.rule
-                ));
-            }
+            findings.extend(inspector.inspect(text));
         }
     }
-    None
+    if findings.is_empty() {
+        return Screened::Send(body);
+    }
+
+    if let Some(finding) = findings
+        .iter()
+        .find(|f| state.redaction.action_for(&f.rule) == Action::Block)
+    {
+        // The inspector and rule ids, never the value. `Finding` carries no
+        // value for exactly this reason: a block that quotes what it caught is
+        // the leak it was meant to stop.
+        return Screened::Refuse(format!(
+            "pasu-proxy blocked this request: its prompt matched {}/{} and was not sent",
+            finding.inspector, finding.rule
+        ));
+    }
+
+    let mut replaced: Vec<String> = Vec::new();
+    let rewritten = rewrite_prompt(&body, state.provider, &mut |text| {
+        let out = redact(text, &findings, &state.redaction)?;
+        replaced.extend(out.rules);
+        Some(out.text)
+    });
+
+    match rewritten {
+        Some(new_body) if !replaced.is_empty() => {
+            replaced.sort();
+            replaced.dedup();
+            // An altered prompt that says nothing is a debugging trap: the model
+            // answers about text the operator never wrote. Counts and rule ids
+            // only — saying which values were removed would undo the removal.
+            eprintln!(
+                "pasu-proxy: redacted {} span(s) from this request ({})",
+                replaced.len(),
+                replaced.join(", ")
+            );
+            Screened::Send(Bytes::from(new_body))
+        }
+        // Findings existed but none could be replaced — an off-boundary span, or
+        // a shape that would not rebuild. Fail closed rather than forward a body
+        // that still carries what was found.
+        _ => Screened::Refuse(
+            "pasu-proxy blocked this request: its prompt matched a rule that could not be \
+             redacted safely, so it was not sent"
+                .into(),
+        ),
+    }
 }
 
 struct Upstream {
