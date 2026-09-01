@@ -14,7 +14,7 @@ All notable changes to pasu are documented here. The format follows
   cannot cover that path — it must permit the provider's address or the agent
   cannot work, and past the handshake the payload is TLS — which makes the
   request body the only place the content is readable.
-  ([#94](https://github.com/CharmingGroot/pasu/issues/94))
+  ([#107](https://github.com/CharmingGroot/pasu/issues/107))
 - **`pasu_core::Inspector`**, the plugin point for content checks. A scanner
   attaches without a layer changing. It returns **findings rather than
   verdicts**: what was found and where, leaving the layer to decide whether that
