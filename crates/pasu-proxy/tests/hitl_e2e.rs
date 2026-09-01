@@ -75,6 +75,7 @@ fn proxy_with_ui(upstream_base: String) -> (Router, pasu_ui::AppState) {
         upstream_base,
         provider: Provider::OpenAi,
         inspectors: Vec::new(),
+        redaction: Default::default(),
     });
     (router(state), approvals)
 }
@@ -169,6 +170,7 @@ async fn ask_without_a_decision_fails_closed() {
         upstream_base: upstream,
         provider: Provider::OpenAi,
         inspectors: Vec::new(),
+        redaction: Default::default(),
     });
 
     let resp = router(state)

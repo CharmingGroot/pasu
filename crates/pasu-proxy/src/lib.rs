@@ -26,6 +26,7 @@ pub mod inspectors;
 pub mod parse;
 pub mod prompt;
 pub mod proxy;
+pub mod redact;
 pub mod stream;
 
 pub use inspect::{inspect, Inspection};

@@ -82,7 +82,8 @@ Tool-call guard, kernel egress, and audit on a single self-hosted box:
 - **The kernel layer is L3/L4** — IP/domain level, and it cannot see inside TLS. Exfiltration to an already-allowed domain is not stopped by the allowlist; content inspection on that path is the proxy layer's job (below).
 - **Content inspection only sees request shapes the proxy parses** — an `Inspector` reads prompt text extracted per provider. A body that does not parse is forwarded untouched, and traffic a tool sends without going through the proxy is bounded by address alone at the kernel layer.
 - **Detection is regex and checksums** — no NER model runs. A path that executes per message cannot afford one, so PII without a pattern (a person's name) is not caught.
-- **Blocking only, no masking** — a match refuses the request. Redacting a value and sending the rest does not exist yet, though `Finding` carries spans so it can be built on top.
+- **Redaction is one-way** — a value is replaced with a placeholder and no original is kept anywhere, so nothing can restore it and the proxy never becomes a store of the data it exists to stop. Restoring values in the reply is a different security posture and a separate decision.
+- **No response-side masking** — PII the model generates is out of scope. This is the request path only.
 - **Streaming is buffered** — SSE tool calls are reassembled and inspected, but the full stream is buffered and relayed at once (no incremental relay). DNS-awareness is best-effort.
 - **Not an input-layer defense** — prompt injection and model misbehavior are out of scope. pasu is a last line of defense over egress and tool intent.
 - **Early stage (MVP)** — no security certification, no production references.
@@ -234,6 +235,30 @@ pasu-proxy --policy policy.yaml --upstream https://api.openai.com \
 
 Off by default. A deployment with no exposure to these patterns is worse off
 having an agent stopped mid-task by a false positive it did not ask for.
+
+### Redacting instead of blocking
+
+Remove what was found and forward the rest. An agent summarising a support
+ticket does not need the ticket blocked — it needs the ticket without the
+customer's number in it.
+
+```bash
+# replace findings and send
+pasu-proxy … --block-pii-kr --redact
+
+# redact most things, but never let a national ID through
+pasu-proxy … --block-pii-kr --redact --block-rule ko-rrn
+```
+
+**Blocking stays the default.** Stopping is the safe answer for a rule nobody
+has decided about. Where `--block-rule` and `--redact-rule` name the same rule,
+**blocking wins** — a contradiction in a security policy reads as the stricter
+option.
+
+The replacement is **one-way**. No original is kept, so nothing can restore it,
+and the proxy never becomes a store of the data it exists to stop from moving.
+`[REDACTED:ko-rrn]` preserves neither the length nor the shape of what it
+replaced; a length-preserving mask leaks the value it hid.
 
 ### How something attaches
 

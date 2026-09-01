@@ -34,54 +34,96 @@ use crate::parse::Provider;
 /// guess, because guessing wrong in either direction is worse than saying so.
 #[must_use]
 pub fn prompt_text(body: &[u8], provider: Provider) -> Option<Vec<String>> {
-    let value: Value = serde_json::from_slice(body).ok()?;
-    let found = match provider {
-        Provider::OpenAi => openai(&value),
-        Provider::Anthropic => anthropic(&value),
-        Provider::Gemini => gemini(&value),
-    }?;
+    let mut value: Value = serde_json::from_slice(body).ok()?;
+    let mut found = Vec::new();
+    visit(&mut value, provider, &mut |text| {
+        found.push(text.to_string());
+        None
+    })?;
     Some(found)
 }
 
-/// `{"messages":[{"role":..,"content":"…"}]}`, and the content-parts form the
-/// same API also accepts.
-fn openai(value: &Value) -> Option<Vec<String>> {
-    let messages = value.get("messages")?.as_array()?;
-    let mut out = Vec::new();
-    for message in messages {
-        match message.get("content") {
-            Some(Value::String(text)) => out.push(text.clone()),
-            Some(Value::Array(parts)) => push_parts(parts, "text", &mut out),
-            _ => {}
-        }
-        // A tool result is human-facing text too, and it is the field most
-        // likely to carry a record an agent just read.
-        if let Some(Value::String(text)) = message.get("tool_call_id").and(message.get("content")) {
-            out.push(text.clone());
+/// Rewrite the same fields [`prompt_text`] reads, and return the new body.
+///
+/// `rewrite` is given each piece of text and returns a replacement, or `None` to
+/// leave it alone.
+///
+/// **One traversal, two uses.** Extraction and rewriting share the walk on
+/// purpose: two functions that decided separately which fields hold prose would
+/// drift, and the day they did, a scanner would be reading a field the redactor
+/// no longer edits. The body is rebuilt from the parsed value rather than by
+/// string replacement, so what leaves is still valid JSON in the provider's
+/// shape.
+///
+/// `None` means the body is not a shape this understands, exactly as in
+/// [`prompt_text`].
+#[must_use]
+pub fn rewrite_prompt(
+    body: &[u8],
+    provider: Provider,
+    rewrite: &mut dyn FnMut(&str) -> Option<String>,
+) -> Option<Vec<u8>> {
+    let mut value: Value = serde_json::from_slice(body).ok()?;
+    visit(&mut value, provider, rewrite)?;
+    serde_json::to_vec(&value).ok()
+}
+
+/// The single traversal. `f` sees every human-authored string; returning
+/// `Some(replacement)` writes it back.
+fn visit(
+    value: &mut Value,
+    provider: Provider,
+    f: &mut dyn FnMut(&str) -> Option<String>,
+) -> Option<()> {
+    match provider {
+        Provider::OpenAi => openai(value, f),
+        Provider::Anthropic => anthropic(value, f),
+        Provider::Gemini => gemini(value, f),
+    }
+}
+
+/// Apply `f` to a string field in place.
+fn touch(slot: Option<&mut Value>, f: &mut dyn FnMut(&str) -> Option<String>) {
+    if let Some(Value::String(text)) = slot {
+        if let Some(replacement) = f(text) {
+            *text = replacement;
         }
     }
-    Some(out)
+}
+
+/// `{"messages":[{"role":..,"content":"…"}]}`, and the content-parts form the
+/// same API also accepts. A tool result rides in `content` too, and it is the
+/// field most likely to carry a record an agent just read.
+fn openai(value: &mut Value, f: &mut dyn FnMut(&str) -> Option<String>) -> Option<()> {
+    let messages = value.get_mut("messages")?.as_array_mut()?;
+    for message in messages {
+        match message.get_mut("content") {
+            Some(Value::String(_)) => touch(message.get_mut("content"), f),
+            Some(Value::Array(parts)) => walk_parts(parts, "text", f),
+            _ => {}
+        }
+    }
+    Some(())
 }
 
 /// `{"system":…,"messages":[{"role":..,"content":…}]}`.
-fn anthropic(value: &Value) -> Option<Vec<String>> {
-    let messages = value.get("messages")?.as_array()?;
-    let mut out = Vec::new();
-    match value.get("system") {
-        Some(Value::String(text)) => out.push(text.clone()),
-        Some(Value::Array(parts)) => push_parts(parts, "text", &mut out),
+fn anthropic(value: &mut Value, f: &mut dyn FnMut(&str) -> Option<String>) -> Option<()> {
+    match value.get_mut("system") {
+        Some(Value::String(_)) => touch(value.get_mut("system"), f),
+        Some(Value::Array(parts)) => walk_parts(parts, "text", f),
         _ => {}
     }
+    let messages = value.get_mut("messages")?.as_array_mut()?;
     for message in messages {
-        match message.get("content") {
-            Some(Value::String(text)) => out.push(text.clone()),
+        match message.get_mut("content") {
+            Some(Value::String(_)) => touch(message.get_mut("content"), f),
             Some(Value::Array(parts)) => {
-                push_parts(parts, "text", &mut out);
+                walk_parts(parts, "text", f);
                 // tool_result content, which carries whatever a tool returned.
-                for part in parts {
-                    match part.get("content") {
-                        Some(Value::String(text)) => out.push(text.clone()),
-                        Some(Value::Array(inner)) => push_parts(inner, "text", &mut out),
+                for part in parts.iter_mut() {
+                    match part.get_mut("content") {
+                        Some(Value::String(_)) => touch(part.get_mut("content"), f),
+                        Some(Value::Array(inner)) => walk_parts(inner, "text", f),
                         _ => {}
                     }
                 }
@@ -89,34 +131,31 @@ fn anthropic(value: &Value) -> Option<Vec<String>> {
             _ => {}
         }
     }
-    Some(out)
+    Some(())
 }
 
 /// `{"contents":[{"parts":[{"text":"…"}]}]}`, plus the system instruction.
-fn gemini(value: &Value) -> Option<Vec<String>> {
-    let contents = value.get("contents")?.as_array()?;
-    let mut out = Vec::new();
+fn gemini(value: &mut Value, f: &mut dyn FnMut(&str) -> Option<String>) -> Option<()> {
     if let Some(parts) = value
-        .get("systemInstruction")
-        .and_then(|s| s.get("parts"))
-        .and_then(Value::as_array)
+        .get_mut("systemInstruction")
+        .and_then(|s| s.get_mut("parts"))
+        .and_then(Value::as_array_mut)
     {
-        push_parts(parts, "text", &mut out);
+        walk_parts(parts, "text", f);
     }
+    let contents = value.get_mut("contents")?.as_array_mut()?;
     for content in contents {
-        if let Some(parts) = content.get("parts").and_then(Value::as_array) {
-            push_parts(parts, "text", &mut out);
+        if let Some(parts) = content.get_mut("parts").and_then(Value::as_array_mut) {
+            walk_parts(parts, "text", f);
         }
     }
-    Some(out)
+    Some(())
 }
 
-/// Collect `field` from every part that carries it as a string.
-fn push_parts(parts: &[Value], field: &str, out: &mut Vec<String>) {
-    for part in parts {
-        if let Some(Value::String(text)) = part.get(field) {
-            out.push(text.clone());
-        }
+/// Apply `f` to `field` on every part that carries it as a string.
+fn walk_parts(parts: &mut [Value], field: &str, f: &mut dyn FnMut(&str) -> Option<String>) {
+    for part in parts.iter_mut() {
+        touch(part.get_mut(field), f);
     }
 }
 

@@ -76,6 +76,33 @@ async fn spawn_mock_upstream() -> String {
     format!("http://{addr}")
 }
 
+/// A mock provider that records the request body it was sent, so a test can
+/// assert on what actually left rather than on what the proxy returned.
+async fn spawn_recording_upstream() -> (String, Arc<std::sync::Mutex<Option<String>>>) {
+    let seen: Arc<std::sync::Mutex<Option<String>>> = Arc::new(std::sync::Mutex::new(None));
+    let recorder = Arc::clone(&seen);
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
+        .await
+        .expect("bind");
+    let addr = listener.local_addr().expect("addr");
+    let app = Router::new().route(
+        "/v1/chat/completions",
+        post(move |body: String| {
+            let recorder = Arc::clone(&recorder);
+            async move {
+                *recorder.lock().expect("record") = Some(body);
+                Json(serde_json::json!({
+                    "choices": [ { "message": { "role": "assistant", "content": "ok" } } ]
+                }))
+            }
+        }),
+    );
+    tokio::spawn(async move {
+        let _ = axum::serve(listener, app).await;
+    });
+    (format!("http://{addr}"), seen)
+}
+
 fn proxy_app(upstream_base: String) -> Router {
     proxy_app_with_inspectors(upstream_base, Vec::new())
 }
@@ -83,6 +110,14 @@ fn proxy_app(upstream_base: String) -> Router {
 fn proxy_app_with_inspectors(
     upstream_base: String,
     inspectors: Vec<Arc<dyn pasu_core::Inspector>>,
+) -> Router {
+    proxy_app_with(upstream_base, inspectors, Default::default())
+}
+
+fn proxy_app_with(
+    upstream_base: String,
+    inspectors: Vec<Arc<dyn pasu_core::Inspector>>,
+    redaction: pasu_proxy::redact::Policy,
 ) -> Router {
     let state = Arc::new(ProxyState {
         guard: Guard::new(
@@ -93,6 +128,7 @@ fn proxy_app_with_inspectors(
         upstream_base,
         provider: Provider::OpenAi,
         inspectors,
+        redaction,
     });
     router(state)
 }
@@ -255,4 +291,98 @@ async fn without_the_filter_the_request_path_is_untouched() {
         .expect("response");
 
     assert_eq!(response.status(), StatusCode::OK);
+}
+
+// ---------------------------------------------------------------------------
+// Redaction
+// ---------------------------------------------------------------------------
+
+/// The evidence that matters: what the provider actually received. Asserting on
+/// the proxy's return value would prove only that it did not refuse.
+#[tokio::test]
+async fn a_redacted_prompt_reaches_the_provider_without_the_value() {
+    let (upstream, seen) = spawn_recording_upstream().await;
+    let app = proxy_app_with(
+        upstream,
+        vec![Arc::new(pasu_proxy::inspectors::PiiKr::builtin())],
+        pasu_proxy::redact::Policy::redact_everything(),
+    );
+
+    let response = app
+        .oneshot(request_with_prompt("고객 주민번호는 900101-1234567 입니다"))
+        .await
+        .expect("response");
+
+    assert_eq!(
+        response.status(),
+        StatusCode::OK,
+        "redaction is not a refusal"
+    );
+
+    let body = seen
+        .lock()
+        .expect("recorded")
+        .clone()
+        .expect("upstream saw a request");
+    assert!(
+        !body.contains("900101-1234567"),
+        "the value must not reach the provider: {body}"
+    );
+    assert!(body.contains("[REDACTED:ko-rrn]"), "{body}");
+    assert!(
+        body.contains("고객") && body.contains("입니다"),
+        "the rest of the prompt must survive, or this is just a block: {body}"
+    );
+    // Still a well-formed request, not a string-replaced body.
+    let parsed: serde_json::Value = serde_json::from_str(&body).expect("valid JSON");
+    assert!(parsed["messages"][0]["content"].is_string());
+}
+
+/// A rule an operator marked as a hard stop is not quietly rewritten instead.
+#[tokio::test]
+async fn a_blocked_rule_still_refuses_even_when_redaction_is_on() {
+    let (upstream, seen) = spawn_recording_upstream().await;
+    let app = proxy_app_with(
+        upstream,
+        vec![Arc::new(pasu_proxy::inspectors::PiiKr::builtin())],
+        pasu_proxy::redact::Policy::redact_everything().blocking("ko-rrn"),
+    );
+
+    let response = app
+        .oneshot(request_with_prompt("주민번호 900101-1234567"))
+        .await
+        .expect("response");
+
+    assert_eq!(response.status(), StatusCode::FORBIDDEN);
+    assert!(
+        seen.lock().expect("recorded").is_none(),
+        "a blocked request must not reach the provider at all"
+    );
+}
+
+/// Every occurrence, not the first — masking one and forwarding the rest is not
+/// masking.
+#[tokio::test]
+async fn every_occurrence_is_replaced() {
+    let (upstream, seen) = spawn_recording_upstream().await;
+    let app = proxy_app_with(
+        upstream,
+        vec![Arc::new(pasu_proxy::inspectors::PiiKr::builtin())],
+        pasu_proxy::redact::Policy::redact_everything(),
+    );
+
+    let _ = app
+        .oneshot(request_with_prompt(
+            "첫 900101-1234567 그리고 둘 900101-1234567",
+        ))
+        .await
+        .expect("response");
+
+    let body = seen
+        .lock()
+        .expect("recorded")
+        .clone()
+        .expect("upstream saw a request");
+    assert!(!body.contains("900101-1234567"), "{body}");
+    assert_eq!(body.matches("[REDACTED:ko-rrn]").count(), 2, "{body}");
 }
