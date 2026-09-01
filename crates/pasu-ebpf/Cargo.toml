@@ -6,7 +6,7 @@ license.workspace = true
 rust-version.workspace = true
 
 [dependencies]
-pasu-ebpf-common = { path = "../pasu-ebpf-common" }
+pasu-ebpf-common = { version = "0.2.0", path = "../pasu-ebpf-common" }
 
 aya-ebpf = { workspace = true }
 aya-log-ebpf = { workspace = true }
