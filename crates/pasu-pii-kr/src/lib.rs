@@ -138,6 +138,18 @@ impl Filter {
         self.inner.check(text)
     }
 
+    /// 걸린 것을 **전부** 돌려준다. 위치 순서가 아니라 규칙 선언 순서다.
+    ///
+    /// [`Filter::check`]는 첫 매치에서 멈춘다. 차단에는 충분하지만 가리는 데는
+    /// 부족하다 — 하나만 가리고 나머지를 보내면 가리지 않은 것과 다르지 않다.
+    ///
+    /// 우선순위는 `check`와 같다. 예외(`allow`)로 판정되는 텍스트는 여기서도 빈
+    /// 결과다. 두 함수가 같은 텍스트를 다르게 판단하면 안 된다.
+    #[must_use]
+    pub fn check_all(&self, text: &str) -> Vec<Hit> {
+        self.inner.check_all(text)
+    }
+
     /// 컴파일된 규칙 수.
     #[must_use]
     pub fn len(&self) -> usize {

@@ -82,4 +82,50 @@ impl Compiled {
         }
         Verdict::Allow
     }
+
+    /// 걸린 것을 **전부** 돌려준다.
+    ///
+    /// [`Compiled::check`]는 첫 매치에서 멈춘다. 차단 판정에는 그걸로 충분하지만
+    /// 마스킹에는 부족하다 — 하나만 가리고 나머지를 보내면 가리지 않은 것과 같다.
+    ///
+    /// 우선순위 규칙은 그대로다. 선언 순서로 처음 걸린 규칙이 `allow`면 이 텍스트는
+    /// 예외이고 결과는 비어 있다. `deny`면 그 지점부터 모든 `deny` 규칙의 매치를
+    /// 모은다. `check`가 이미 반환한 뒤라 닿지 않던 뒤쪽 `allow`는 여기서도 닿지
+    /// 않는다 — 두 함수가 같은 텍스트에 대해 다르게 판단하면 안 되기 때문이다.
+    pub(crate) fn check_all(&self, text: &str) -> Vec<Hit> {
+        let candidates = self.set.matches(text);
+        if !candidates.matched_any() {
+            return Vec::new();
+        }
+
+        let mut hits = Vec::new();
+        let mut decided = false;
+        for idx in candidates.iter() {
+            let entry = &self.each[idx];
+            for m in entry.re.find_iter(text) {
+                if let Some(v) = entry.validator {
+                    if !v(m.as_str()) {
+                        continue;
+                    }
+                }
+                match entry.action {
+                    Action::Allow => {
+                        // 아직 아무 규칙도 결정하지 않았을 때만 예외가 성립한다.
+                        // `check`에서 deny 가 먼저 반환했을 상황이면 여기서도 무시한다.
+                        if !decided {
+                            return Vec::new();
+                        }
+                    }
+                    Action::Deny => {
+                        decided = true;
+                        hits.push(Hit {
+                            rule: entry.id.clone(),
+                            span: m.range(),
+                        });
+                    }
+                }
+            }
+        }
+        hits
+    }
 }
