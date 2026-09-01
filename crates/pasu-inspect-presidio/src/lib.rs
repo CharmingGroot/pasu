@@ -8,6 +8,26 @@
 //! There is no interchange standard to implement. This is not one either — it is
 //! a reader for one popular format, and it says so.
 //!
+//! ```
+//! use pasu_core::Inspector;
+//! use pasu_inspect_presidio::Import;
+//!
+//! let yaml = r#"
+//! recognizers:
+//!   - name: "SSN Recognizer"
+//!     supported_entity: "US_SSN"
+//!     patterns:
+//!       - name: "ssn"
+//!         regex: "\\b\\d{3}-\\d{2}-\\d{4}\\b"
+//!         score: 0.85
+//! "#;
+//!
+//! let rules = Import { min_score: 0.5 }.read(yaml, "presidio")?;
+//! let found = rules.inspect("the number is 123-45-6789");
+//! assert_eq!(found[0].rule, "US_SSN");
+//! # Ok::<(), pasu_inspect_presidio::Error>(())
+//! ```
+//!
 //! # What crosses, and what does not
 //!
 //! Only regex and deny-list recognizers are expressible in that YAML at all;

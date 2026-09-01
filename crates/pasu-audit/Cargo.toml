@@ -7,7 +7,7 @@ repository.workspace = true
 rust-version.workspace = true
 
 [dependencies]
-pasu-core = { path = "../pasu-core" }
+pasu-core = { version = "0.2.0", path = "../pasu-core" }
 serde_json = "1"
 log = { workspace = true }
 

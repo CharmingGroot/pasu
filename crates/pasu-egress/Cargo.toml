@@ -7,9 +7,9 @@ license.workspace = true
 rust-version.workspace = true
 
 [dependencies]
-pasu-audit = { path = "../pasu-audit" }
-pasu-core = { path = "../pasu-core" }
-pasu-ebpf-common = { path = "../pasu-ebpf-common", features = ["user"] }
+pasu-audit = { version = "0.2.0", path = "../pasu-audit" }
+pasu-core = { version = "0.2.0", path = "../pasu-core" }
+pasu-ebpf-common = { version = "0.2.0", path = "../pasu-ebpf-common", features = ["user"] }
 
 anyhow = { workspace = true, default-features = true }
 aya = { workspace = true }
@@ -48,7 +48,7 @@ cargo_metadata = { workspace = true }
 # Finally note that *any* usage of `artifact = ...` in *any* Cargo.toml in the workspace breaks
 # workflows with stable cargo; stable cargo outright refuses to load manifests that use unstable
 # features.
-pasu-ebpf = { path = "../pasu-ebpf" }
+pasu-ebpf = { version = "0.2.0", path = "../pasu-ebpf" }
 
 [lib]
 path = "src/lib.rs"

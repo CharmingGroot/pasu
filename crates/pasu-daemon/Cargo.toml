@@ -11,9 +11,9 @@ rust-version.workspace = true
 # As the app-level binary it may depend on concrete crates (pasu-rules,
 # pasu-egress); the library crates themselves stay decoupled behind pasu-core.
 [dependencies]
-pasu-audit = { path = "../pasu-audit" }
-pasu-egress = { path = "../pasu-egress" }
-pasu-rules = { path = "../pasu-rules" }
+pasu-audit = { version = "0.2.0", path = "../pasu-audit" }
+pasu-egress = { version = "0.2.0", path = "../pasu-egress" }
+pasu-rules = { version = "0.2.0", path = "../pasu-rules" }
 
 anyhow = { workspace = true, default-features = true }
 clap = { workspace = true, features = ["derive"] }
