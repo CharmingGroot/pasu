@@ -67,6 +67,55 @@ pub trait Layer {
     fn check(&self, event: &Event) -> Verdict;
 }
 
+/// One thing an [`Inspector`] found in a piece of text, and where.
+///
+/// **It never carries the matched value.** An inspector that reported what it
+/// caught would put the secret into the block message, the audit log and the
+/// operator's terminal — the leak it exists to prevent. The span is enough to
+/// redact or to point a human at, and it is enough for nothing else.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Finding {
+    /// Which inspector found it, as it appears in audit records.
+    pub inspector: String,
+    /// The inspector's own rule or entity id — `ko-rrn`, `US_SSN`, `aws-key`.
+    pub rule: String,
+    /// Byte range in the text that was inspected.
+    pub span: core::ops::Range<usize>,
+}
+
+/// Something that reads text on its way past a layer and says what it found.
+///
+/// This is the extension point for content checks — PII, secrets, whatever a
+/// deployment needs — so that adding one does not mean editing a layer. A
+/// Korean-PII matcher, a scanner speaking to a Presidio server, and an
+/// in-house rule set are all the same shape here.
+///
+/// # Finding, not deciding
+///
+/// An inspector returns findings and stops. It does not block, mask, or judge:
+/// the layer holding it decides what a finding means, and the same finding may
+/// warrant a refusal on a request and a redaction on a response.
+///
+/// Keeping those apart is what makes masking possible later without changing
+/// this trait — an inspector that had answered "allow or deny" would have
+/// thrown away the spans a redactor needs.
+///
+/// # Contract
+///
+/// * **Linear time.** An inspector runs on every message through a layer.
+///   Backtracking regexes belong nowhere near it.
+/// * **No I/O on this call** unless the deployment chose an inspector that does
+///   it knowingly — a network round trip per message is a decision, not a
+///   detail.
+/// * **Empty means nothing found**, never "could not tell". An inspector that
+///   cannot answer must say so by failing to construct, not by returning clean.
+pub trait Inspector: Send + Sync {
+    /// Name, as it appears in audit records and refusal messages.
+    fn name(&self) -> &str;
+    /// Everything found in `text`, in the order it appears.
+    fn inspect(&self, text: &str) -> Vec<Finding>;
+}
+
 /// Human-in-the-loop approval for `Verdict::Ask`. Returns `true` to allow the
 /// action, `false` to block it. **Fail-closed by contract**: on any doubt (a
 /// closed channel, a timeout, an error), return false.

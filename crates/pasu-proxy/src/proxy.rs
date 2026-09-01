@@ -13,10 +13,11 @@ use axum::{
     routing::any,
     Json, Router,
 };
-use pasu_core::{Approver, Guard, RuleEngine, Verdict};
+use pasu_core::{Approver, Guard, Inspector, RuleEngine, Verdict};
 
 use crate::inspect::inspect;
 use crate::parse::{extract, Provider};
+use crate::prompt::prompt_text;
 use crate::stream::{extract_stream, is_event_stream};
 
 /// Shared proxy state: the guard (policy + HITL + audit), an HTTP client, the
@@ -30,6 +31,18 @@ pub struct ProxyState<E: RuleEngine, A: Approver> {
     pub upstream_base: String,
     /// Wire format to parse responses as.
     pub provider: Provider,
+    /// What reads the prompt before it leaves, if anything.
+    ///
+    /// Empty is the default and means the request path is forwarded untouched —
+    /// the behaviour before this existed. A deployment with no exposure to what
+    /// an inspector matches should not have an agent stopped mid-task by a
+    /// false positive it never asked for.
+    ///
+    /// A `Vec` rather than one inspector because the question a deployment has
+    /// is rarely single: Korean PII *and* cloud credentials *and* an in-house
+    /// pattern. Each is a [`pasu_core::Inspector`] and none of them needs this
+    /// file to change.
+    pub inspectors: Vec<Arc<dyn Inspector>>,
 }
 
 /// Build the reverse-proxy router. Every path is forwarded to `upstream_base`.
@@ -58,6 +71,13 @@ where
     let path = uri.path_and_query().map_or("/", |p| p.as_str());
     let url = format!("{}{path}", state.upstream_base.trim_end_matches('/'));
 
+    // Before the request leaves. Past this point the payload is TLS and the
+    // kernel layer can only decide by address, so this is the last place the
+    // content is readable at all.
+    if let Some(reason) = refuse_request(&state, &body) {
+        return blocked(&reason);
+    }
+
     let upstream = match forward_upstream(&state.client, &method, &url, &headers, body).await {
         Ok(u) => u,
         // Cannot reach upstream: fail-closed for a security proxy.
@@ -85,6 +105,38 @@ where
     }
 
     passthrough(upstream)
+}
+
+/// Why this request must not leave, if it must not.
+///
+/// Fail-closed on a hit, matching what the proxy already does when upstream is
+/// unreachable. A body that does not parse as a known request shape is passed
+/// through: refusing every unrecognised body would break every endpoint that is
+/// not a completion, and the kernel layer is what covers the paths this cannot
+/// read.
+fn refuse_request<E, A>(state: &ProxyState<E, A>, body: &Bytes) -> Option<String>
+where
+    E: RuleEngine,
+    A: Approver,
+{
+    if state.inspectors.is_empty() {
+        return None;
+    }
+    let texts = prompt_text(body, state.provider)?;
+    for text in &texts {
+        for inspector in &state.inspectors {
+            if let Some(finding) = inspector.inspect(text).into_iter().next() {
+                // The inspector and rule ids, never the value. `Finding` carries
+                // no value for exactly this reason: a block that quotes what it
+                // caught is the leak it was meant to stop.
+                return Some(format!(
+                    "pasu-proxy blocked this request: its prompt matched {}/{} and was not sent",
+                    finding.inspector, finding.rule
+                ));
+            }
+        }
+    }
+    None
 }
 
 struct Upstream {

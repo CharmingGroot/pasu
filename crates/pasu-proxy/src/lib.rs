@@ -22,7 +22,9 @@
 // 공개 API 문서 누락을 조용히 통과시키지 않는다(crates.io 배포 대상).
 #![warn(missing_docs)]
 pub mod inspect;
+pub mod inspectors;
 pub mod parse;
+pub mod prompt;
 pub mod proxy;
 pub mod stream;
 

@@ -77,6 +77,13 @@ async fn spawn_mock_upstream() -> String {
 }
 
 fn proxy_app(upstream_base: String) -> Router {
+    proxy_app_with_inspectors(upstream_base, Vec::new())
+}
+
+fn proxy_app_with_inspectors(
+    upstream_base: String,
+    inspectors: Vec<Arc<dyn pasu_core::Inspector>>,
+) -> Router {
     let state = Arc::new(ProxyState {
         guard: Guard::new(
             RulesetEngine::from_yaml(RULES).expect("ruleset"),
@@ -85,8 +92,24 @@ fn proxy_app(upstream_base: String) -> Router {
         client: reqwest::Client::new(),
         upstream_base,
         provider: Provider::OpenAi,
+        inspectors,
     });
     router(state)
+}
+
+/// A completion request whose prompt carries whatever `prompt` says.
+fn request_with_prompt(prompt: &str) -> Request<Body> {
+    let body = serde_json::json!({
+        "model": "gpt-4",
+        "messages": [ { "role": "user", "content": prompt } ]
+    })
+    .to_string();
+    Request::builder()
+        .method("POST")
+        .uri("/v1/chat/completions")
+        .header("content-type", "application/json")
+        .body(Body::from(body))
+        .expect("request")
 }
 
 fn request_for(tool: &str) -> Request<Body> {
@@ -163,4 +186,73 @@ async fn allowed_tool_call_in_sse_stream_passes_with_body_intact() {
     assert!(text.contains("data:"), "SSE framing preserved: {text}");
     assert!(text.contains("web_search"));
     assert!(text.contains("[DONE]"));
+}
+
+// ---------------------------------------------------------------------------
+// The request path
+// ---------------------------------------------------------------------------
+
+/// The gap this closes: the proxy forwarded every request untouched, so a prompt
+/// carrying a customer record reached the provider unexamined. The kernel layer
+/// cannot cover it — it must permit the provider's address, and past that the
+/// payload is TLS.
+#[tokio::test]
+async fn a_prompt_carrying_pii_never_reaches_the_provider() {
+    let upstream = spawn_mock_upstream().await;
+    let app = proxy_app_with_inspectors(
+        upstream,
+        vec![Arc::new(pasu_proxy::inspectors::PiiKr::builtin())],
+    );
+
+    let response = app
+        .oneshot(request_with_prompt("고객 주민번호는 900101-1234567 입니다"))
+        .await
+        .expect("response");
+
+    assert_eq!(response.status(), StatusCode::FORBIDDEN);
+    let body = axum::body::to_bytes(response.into_body(), usize::MAX)
+        .await
+        .expect("body");
+    let said = String::from_utf8_lossy(&body);
+    assert!(
+        said.contains("ko-rrn"),
+        "the rule id belongs in the reason: {said}"
+    );
+    assert!(
+        !said.contains("900101-1234567"),
+        "a block that quotes what it caught is the leak it was meant to stop: {said}"
+    );
+}
+
+/// The other direction, and the one a false positive would break: an ordinary
+/// prompt still gets through, and its response is still guarded as before.
+#[tokio::test]
+async fn an_ordinary_prompt_still_reaches_the_provider() {
+    let upstream = spawn_mock_upstream().await;
+    let app = proxy_app_with_inspectors(
+        upstream,
+        vec![Arc::new(pasu_proxy::inspectors::PiiKr::builtin())],
+    );
+
+    let response = app
+        .oneshot(request_with_prompt("오늘 날씨 어때?"))
+        .await
+        .expect("response");
+
+    assert_eq!(response.status(), StatusCode::OK);
+}
+
+/// Off by default. A deployment that did not ask for this must behave exactly as
+/// it did before the check existed.
+#[tokio::test]
+async fn without_the_filter_the_request_path_is_untouched() {
+    let upstream = spawn_mock_upstream().await;
+    let app = proxy_app(upstream);
+
+    let response = app
+        .oneshot(request_with_prompt("고객 주민번호는 900101-1234567 입니다"))
+        .await
+        .expect("response");
+
+    assert_eq!(response.status(), StatusCode::OK);
 }

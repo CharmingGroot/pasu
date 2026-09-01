@@ -43,6 +43,14 @@ struct Opt {
     /// omit to fail-closed on `Ask`.
     #[clap(long)]
     ui: Option<String>,
+    /// Refuse any request whose prompt carries Korean PII, before it is sent.
+    ///
+    /// Off by default. The request path is otherwise forwarded untouched, which
+    /// is the behaviour that existed before this flag — a deployment with no
+    /// exposure to these patterns should not have an agent stopped mid-task by a
+    /// false positive it did not ask for.
+    #[clap(long)]
+    block_pii_kr: bool,
     /// Seconds to wait for the upstream TCP+TLS handshake.
     #[clap(long, default_value_t = 10)]
     connect_timeout_secs: u64,
@@ -54,6 +62,27 @@ struct Opt {
     /// legitimate long completions.
     #[clap(long, default_value_t = 120)]
     read_timeout_secs: u64,
+}
+
+/// The request-side inspectors an operator asked for, and a line per inspector
+/// saying it is on.
+///
+/// Silence would be the wrong default here in both directions: an operator who
+/// passed the flag needs to see it took effect, and one who did not needs no
+/// line at all rather than a reassuring one about a check that is not running.
+fn inspectors(pii_kr: bool) -> Vec<Arc<dyn pasu_core::Inspector>> {
+    let mut chosen: Vec<Arc<dyn pasu_core::Inspector>> = Vec::new();
+    if pii_kr {
+        chosen.push(Arc::new(pasu_proxy::inspectors::PiiKr::builtin()));
+    }
+    for inspector in &chosen {
+        eprintln!(
+            "pasu-proxy: requests are inspected by {} and refused on a match \
+             (rule ids are logged, never the matched text)",
+            inspector.name()
+        );
+    }
+    chosen
 }
 
 fn parse_provider(s: &str) -> anyhow::Result<Provider> {
@@ -152,6 +181,7 @@ async fn main() -> anyhow::Result<()> {
                 client,
                 upstream_base: opt.upstream.clone(),
                 provider,
+                inspectors: inspectors(opt.block_pii_kr),
             });
             eprintln!("pasu-proxy HITL approval UI on http://{ui_addr}");
             tokio::try_join!(serve_proxy(state, &opt.listen), async {
@@ -168,6 +198,7 @@ async fn main() -> anyhow::Result<()> {
                 client,
                 upstream_base: opt.upstream.clone(),
                 provider,
+                inspectors: inspectors(opt.block_pii_kr),
             });
             serve_proxy(state, &opt.listen).await?;
         }
