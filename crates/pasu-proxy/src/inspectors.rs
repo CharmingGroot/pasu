@@ -39,18 +39,19 @@ impl Inspector for PiiKr {
     }
 
     fn inspect(&self, text: &str) -> Vec<Finding> {
-        // The scanner answers with the first hit rather than every one, so this
-        // reports the first too. It is enough to refuse on; a redactor will want
-        // all of them, and that is a change to the scanner rather than to this
-        // adapter or to the trait.
-        match self.filter.check(text) {
-            pasu_pii_kr::Verdict::Deny(hit) => vec![Finding {
+        // Every hit, not the first. Refusing needs only one, but redacting needs
+        // all of them — masking one occurrence and sending the rest is not
+        // masking. `check_all` keeps the same allow-wins priority as `check`, so
+        // the two never disagree about a piece of text.
+        self.filter
+            .check_all(text)
+            .into_iter()
+            .map(|hit| Finding {
                 inspector: "pii-kr".into(),
                 rule: hit.rule,
                 span: hit.span,
-            }],
-            pasu_pii_kr::Verdict::Allow => Vec::new(),
-        }
+            })
+            .collect()
     }
 }
 
@@ -66,6 +67,17 @@ mod tests {
         assert_eq!(finding.rule, "ko-rrn");
         assert_eq!(finding.inspector, "pii-kr");
         assert!(!finding.span.is_empty());
+    }
+
+    /// The adapter must not narrow what the scanner reports: a redactor reading
+    /// findings needs every occurrence, not the first.
+    #[test]
+    fn every_occurrence_becomes_a_finding() {
+        let text = "첫 번째 900101-1234567, 두 번째 900101-1234567 입니다";
+
+        let found = PiiKr::builtin().inspect(text);
+
+        assert_eq!(found.len(), 2, "{found:?}");
     }
 
     #[test]
