@@ -24,6 +24,8 @@ pub enum Verdict {
     Ask(String),
 }
 
+pub mod redact;
+
 /// An action the agent wants to take. Layers evaluate this event.
 #[derive(Debug, Clone)]
 pub struct Event {

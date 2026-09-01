@@ -1,14 +1,27 @@
-//! Adapters that make an existing scanner usable as a [`pasu_core::Inspector`].
+//! Use [`pasu_pii_kr`] as a [`pasu_core::Inspector`].
 //!
-//! The adapter lives here rather than in the scanner. `pasu-pii-kr` depends on
-//! no other pasu crate by design — it is meant to be usable by an LLM gateway
-//! that has never heard of pasu — and reversing that to implement a pasu trait
-//! would cost it exactly the property that makes it worth having.
+//! ```
+//! use pasu_core::Inspector;
+//! use pasu_inspect_pii_kr::PiiKr;
 //!
-//! So the dependency points one way: the proxy knows about the scanner, and the
-//! scanner knows about nothing. Anything else plugs in the same way — a client
-//! for a Presidio server, a secret scanner, an in-house matcher — by wrapping
-//! it here or in its own crate. None of them requires touching a layer.
+//! let found = PiiKr::builtin().inspect("고객 주민번호는 900101-1234567 입니다");
+//! assert_eq!(found[0].rule, "ko-rrn");
+//! ```
+//!
+//! # Why this is its own crate
+//!
+//! `pasu-pii-kr` deliberately depends on no pasu crate. That is what lets a
+//! gateway which has never heard of pasu use the scanner, and it is worth
+//! keeping — so the adapter cannot live there.
+//!
+//! It used to live inside `pasu-proxy`, which made the proxy the only thing that
+//! could use it and made every build of the proxy compile the scanner whether or
+//! not it was wanted. Here, both sides are free: the scanner stays
+//! dependency-free, the proxy takes this crate only when asked, and a different
+//! host — a daemon, someone else's gateway — can take the adapter without taking
+//! the proxy.
+#![forbid(unsafe_code)]
+#![warn(missing_docs)]
 
 use pasu_core::{Finding, Inspector};
 

@@ -18,8 +18,8 @@ use pasu_core::{Approver, Guard, Inspector, RuleEngine, Verdict};
 use crate::inspect::inspect;
 use crate::parse::{extract, Provider};
 use crate::prompt::{prompt_text, rewrite_prompt};
-use crate::redact::{redact, Action, Policy as RedactionPolicy};
 use crate::stream::{extract_stream, is_event_stream};
+use pasu_core::redact::{redact, Action, Policy as RedactionPolicy};
 
 /// Shared proxy state: the guard (policy + HITL + audit), an HTTP client, the
 /// upstream provider base URL, and which wire format to parse.

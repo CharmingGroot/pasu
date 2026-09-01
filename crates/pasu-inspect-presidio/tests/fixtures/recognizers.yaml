@@ -1,0 +1,36 @@
+# Written here, from the published shape of a recognizer file — not copied from
+# any project. It exercises the parts of that shape this crate has to survive,
+# and every entry is chosen for a case rather than for realism.
+recognizers:
+  # A weak pattern. Scores this low are ordinary in the wild, because context
+  # words are meant to raise them and nothing here raises anything — so this is
+  # the entry the default threshold must refuse.
+  - name: "Zip code Recognizer"
+    supported_language: "de"
+    supported_entity: "ZIP"
+    patterns:
+      - name: "zip code (weak)"
+        regex: "(\\b\\d{5}(?:\\-\\d{4})?\\b)"
+        score: 0.01
+    context:
+      - zip
+      - code
+
+  # A deny list rather than a pattern: fixed strings, no regex.
+  - name: "Titles recognizer"
+    supported_language: "en"
+    supported_entity: "TITLE"
+    deny_list:
+      - Mr.
+      - Mrs.
+      - Ms.
+      - Dr.
+
+  # An ordinary pattern that imports cleanly at the default threshold.
+  - name: "SSN Recognizer"
+    supported_language: "en"
+    supported_entity: "US_SSN"
+    patterns:
+      - name: "ssn"
+        regex: "\\b\\d{3}-\\d{2}-\\d{4}\\b"
+        score: 0.85

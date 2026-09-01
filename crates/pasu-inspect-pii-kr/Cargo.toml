@@ -1,0 +1,15 @@
+[package]
+name = "pasu-inspect-pii-kr"
+version = "0.2.0"
+description = "Use pasu-pii-kr as a pasu Inspector"
+keywords = ["pii", "korea", "privacy", "llm", "guardrail"]
+categories = ["text-processing"]
+readme = "README.md"
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+rust-version.workspace = true
+
+[dependencies]
+pasu-core = { version = "0.2.0", path = "../pasu-core" }
+pasu-pii-kr = { version = "0.2.0", path = "../pasu-pii-kr" }

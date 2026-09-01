@@ -22,11 +22,19 @@
 //! the character classes of what it replaced — a mask that keeps those leaks the
 //! value it hid, and a `\d`-shaped mask over a national ID leaks most of it.
 //!
-//! [`Inspector`]: pasu_core::Inspector
+//! # Why this is in `pasu-core`
+//!
+//! Deciding what a finding means is not the proxy's question. It is the same
+//! question wherever an inspector runs, and a second layer that wanted to answer
+//! it would otherwise either depend on the proxy or write its own — and two
+//! implementations of "which findings block" is exactly the drift a security
+//! tool cannot afford.
+//!
+//! [`Inspector`]: crate::Inspector
 
 use std::collections::BTreeSet;
 
-use pasu_core::Finding;
+use crate::Finding;
 
 /// What to do about a finding.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

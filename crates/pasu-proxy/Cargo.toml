@@ -16,8 +16,12 @@ path = "src/main.rs"
 
 [dependencies]
 pasu-core = { version = "0.2.0", path = "../pasu-core" }
-pasu-pii-kr = { version = "0.2.0", path = "../pasu-pii-kr" }
-pasu-inspect-presidio = { version = "0.2.0", path = "../pasu-inspect-presidio" }
+# Optional, and off by default. The proxy's job is to run inspectors, not to know
+# which ones exist — a deployment that wants neither should not compile either,
+# and one that wants a scanner this repository has never heard of should not have
+# to remove these first.
+pasu-inspect-pii-kr = { version = "0.2.0", path = "../pasu-inspect-pii-kr", optional = true }
+pasu-inspect-presidio = { version = "0.2.0", path = "../pasu-inspect-presidio", optional = true }
 axum = "0.7"
 reqwest = { version = "0.13", default-features = false, features = ["rustls"] }
 tokio = { workspace = true, features = ["rt-multi-thread", "macros", "net"] }
@@ -31,9 +35,20 @@ clap = { workspace = true, features = ["derive"] }
 anyhow = { workspace = true, default-features = true }
 
 [dev-dependencies]
+# The e2e tests exercise a real inspector through the proxy, so they need one —
+# but only the tests do, which is why it is here rather than a hard dependency.
+pasu-inspect-pii-kr = { version = "0.2.0", path = "../pasu-inspect-pii-kr" }
 tower = { version = "0.5", features = ["util"] }
 criterion = { version = "0.5", default-features = false, features = ["cargo_bench_support"] }
 
 [[bench]]
 name = "parse"
 harness = false
+
+[features]
+default = ["pii-kr", "presidio"]
+# The scanners this repository ships. Both are on by default so the binary is
+# useful out of the box; a library user or a slimmer build turns them off with
+# default-features = false.
+pii-kr = ["dep:pasu-inspect-pii-kr"]
+presidio = ["dep:pasu-inspect-presidio"]

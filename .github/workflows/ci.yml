@@ -28,6 +28,16 @@ jobs:
       # a separate (privileged) job — see the ci.md plan below.
       - name: clippy
         run: cargo clippy --all-targets -- -D warnings
+      # The proxy must not need any scanner to build. A `use` added outside a
+      # cfg would compile fine here with default features on, and would only
+      # break for someone building the proxy without them — which is exactly the
+      # person who cannot report it.
+      - name: 스캐너 없이 프록시가 빌드되는가
+        run: |
+          cargo build -p pasu-proxy --no-default-features
+          cargo build -p pasu-proxy --no-default-features --features pii-kr
+          cargo build -p pasu-proxy --no-default-features --features presidio
+
       - name: test
         run: cargo test
       # optional OTLP verdict export (feature-gated; keeps the default build pure)
