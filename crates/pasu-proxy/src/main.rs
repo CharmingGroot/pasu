@@ -51,6 +51,21 @@ struct Opt {
     /// false positive it did not ask for.
     #[clap(long)]
     block_pii_kr: bool,
+    /// Load Presidio recognizer YAML and inspect requests with it.
+    ///
+    /// Reads the format people have already exported rather than asking them to
+    /// retype their rules. What does not survive the trip — weak scores, context
+    /// words, Python-only regex — is reported by name, and a file with anything
+    /// unusable is refused rather than half-loaded.
+    #[clap(long, value_name = "PATH")]
+    presidio_rules: Option<std::path::PathBuf>,
+    /// The lowest Presidio pattern score to import.
+    ///
+    /// Presidio ships patterns as weak as 0.01 because context words raise them
+    /// there; nothing raises them here, so a low value imports patterns that
+    /// fire on ordinary text.
+    #[clap(long, default_value_t = 0.5)]
+    presidio_min_score: f64,
     /// Seconds to wait for the upstream TCP+TLS handshake.
     #[clap(long, default_value_t = 10)]
     connect_timeout_secs: u64,
@@ -70,10 +85,25 @@ struct Opt {
 /// Silence would be the wrong default here in both directions: an operator who
 /// passed the flag needs to see it took effect, and one who did not needs no
 /// line at all rather than a reassuring one about a check that is not running.
-fn inspectors(pii_kr: bool) -> Vec<Arc<dyn pasu_core::Inspector>> {
+fn inspectors(opt: &Opt) -> anyhow::Result<Vec<Arc<dyn pasu_core::Inspector>>> {
     let mut chosen: Vec<Arc<dyn pasu_core::Inspector>> = Vec::new();
-    if pii_kr {
+    if opt.block_pii_kr {
         chosen.push(Arc::new(pasu_proxy::inspectors::PiiKr::builtin()));
+    }
+    if let Some(path) = &opt.presidio_rules {
+        let yaml = std::fs::read_to_string(path)
+            .with_context(|| format!("read presidio rules {}", path.display()))?;
+        let import = pasu_inspect_presidio::Import {
+            min_score: opt.presidio_min_score,
+        };
+        // Refuse a partial load. An operator who believes a rule file is in
+        // force, and is holding half of it, is worse off than one who got an
+        // error at startup.
+        let rules = import
+            .read(&yaml, "presidio")
+            .with_context(|| format!("import presidio rules {}", path.display()))?;
+        eprintln!("pasu-proxy: {} presidio pattern(s) loaded", rules.len());
+        chosen.push(Arc::new(rules));
     }
     for inspector in &chosen {
         eprintln!(
@@ -82,7 +112,7 @@ fn inspectors(pii_kr: bool) -> Vec<Arc<dyn pasu_core::Inspector>> {
             inspector.name()
         );
     }
-    chosen
+    Ok(chosen)
 }
 
 fn parse_provider(s: &str) -> anyhow::Result<Provider> {
@@ -152,6 +182,9 @@ async fn main() -> anyhow::Result<()> {
     let opt = Opt::parse();
     let provider = parse_provider(&opt.provider)?;
     let engine = load_engine(&opt.policy)?;
+    // Built once, before anything listens: a rule file that cannot be honoured
+    // must stop startup rather than be discovered on the first request.
+    let chosen_inspectors = inspectors(&opt)?;
     // 타임아웃이 없으면 응답하지 않는 업스트림이 요청을 무한히 붙잡고,
     // 커넥션이 쌓여 프록시가 가용성 병목이 된다. 다만 전체(total) 타임아웃은
     // 긴 생성·스트리밍을 잘라내므로 연결/유휴로 나눠 건다.
@@ -181,7 +214,7 @@ async fn main() -> anyhow::Result<()> {
                 client,
                 upstream_base: opt.upstream.clone(),
                 provider,
-                inspectors: inspectors(opt.block_pii_kr),
+                inspectors: chosen_inspectors.clone(),
             });
             eprintln!("pasu-proxy HITL approval UI on http://{ui_addr}");
             tokio::try_join!(serve_proxy(state, &opt.listen), async {
@@ -198,7 +231,7 @@ async fn main() -> anyhow::Result<()> {
                 client,
                 upstream_base: opt.upstream.clone(),
                 provider,
-                inspectors: inspectors(opt.block_pii_kr),
+                inspectors: chosen_inspectors.clone(),
             });
             serve_proxy(state, &opt.listen).await?;
         }
