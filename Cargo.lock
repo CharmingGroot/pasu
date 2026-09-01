@@ -1392,6 +1392,16 @@ dependencies = [
 ]
 
 [[package]]
+name = "pasu-inspect-presidio"
+version = "0.2.0"
+dependencies = [
+ "pasu-core",
+ "regex",
+ "serde",
+ "serde_yaml",
+]
+
+[[package]]
 name = "pasu-pii-kr"
 version = "0.2.0"
 dependencies = [
@@ -1409,6 +1419,7 @@ dependencies = [
  "clap",
  "criterion",
  "pasu-core",
+ "pasu-inspect-presidio",
  "pasu-pii-kr",
  "pasu-rules",
  "pasu-ui",

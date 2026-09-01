@@ -1,0 +1,17 @@
+[package]
+name = "pasu-inspect-presidio"
+version = "0.2.0"
+edition = "2021"
+rust-version = "1.86"
+license = "Apache-2.0"
+description = "Load Presidio recognizer YAML as a pasu Inspector"
+repository = "https://github.com/CharmingGroot/pasu"
+
+[dependencies]
+pasu-core = { path = "../pasu-core" }
+regex = { version = "1", default-features = false, features = ["std", "perf", "unicode-perl"] }
+serde = { version = "1", features = ["derive"] }
+serde_yaml = "0.9"
+
+[dev-dependencies]
+pasu-core = { path = "../pasu-core" }
