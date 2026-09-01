@@ -107,6 +107,20 @@ async fn main() -> anyhow::Result<()> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    /// The same guard as `pasu-proxy`: clap's `help` is a default feature and
+    /// the workspace turns defaults off, so this fails with a plain
+    /// `UnknownArgument` the moment someone trims that feature list again.
+    #[test]
+    fn help_is_actually_available() {
+        let error = Opt::try_parse_from(["pasu-daemon", "--help"])
+            .expect_err("--help exits rather than parsing");
+
+        assert_eq!(
+            error.kind(),
+            clap::error::ErrorKind::DisplayHelp,
+            "--help must print help, not fail as an unknown argument"
+        );
+    }
 
     fn opt(policy: &std::path::Path) -> Opt {
         Opt {
