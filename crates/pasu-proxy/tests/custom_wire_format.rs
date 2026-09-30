@@ -100,6 +100,7 @@ fn app(upstream: String, inspectors: Vec<Arc<dyn pasu_core::Inspector>>) -> Rout
         provider: Arc::new(HouseFormat),
         inspectors,
         redaction: Default::default(),
+        options: Default::default(),
     });
     router(state)
 }

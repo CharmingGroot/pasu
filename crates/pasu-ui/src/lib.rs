@@ -12,8 +12,11 @@
 #![forbid(unsafe_code)]
 // 공개 API 문서 누락을 조용히 통과시키지 않는다(crates.io 배포 대상).
 #![warn(missing_docs)]
+pub mod access;
 pub mod dashboard;
 pub mod shutdown;
+
+pub use access::{Access, AccessError};
 
 use std::collections::{HashMap, VecDeque};
 use std::sync::atomic::{AtomicU64, Ordering};
@@ -206,8 +209,10 @@ fn routes(approvals: AppState, feed: AuditFeed) -> Router {
 }
 
 /// axum router: approval UI (`/`, `/decision`) + audit view (`/audit`).
-pub fn router(approvals: AppState, feed: AuditFeed) -> Router {
-    routes(approvals, feed).layer(Extension(Nav { egress: false }))
+///
+/// Every route requires `access`; there is no unauthenticated form of the UI.
+pub fn router(approvals: AppState, feed: AuditFeed, access: Access) -> Router {
+    router_with_dashboard(approvals, feed, None, access)
 }
 
 /// Router including the egress dashboard (`/egress`) when an admin client is
@@ -216,6 +221,7 @@ pub fn router_with_dashboard(
     approvals: AppState,
     feed: AuditFeed,
     egress: Option<dashboard::EgressUi>,
+    access: Access,
 ) -> Router {
     let egress_on = egress.is_some();
     let base = routes(approvals, feed);
@@ -223,7 +229,9 @@ pub fn router_with_dashboard(
         Some(ui) => base.merge(dashboard::router(ui)),
         None => base,
     };
-    combined.layer(Extension(Nav { egress: egress_on }))
+    combined.layer(Extension(Nav { egress: egress_on })).layer(
+        axum::middleware::from_fn_with_state(access, access::require),
+    )
 }
 
 /// Serve the UI on `addr` until the process exits.
@@ -231,8 +239,9 @@ pub async fn serve(
     addr: std::net::SocketAddr,
     approvals: AppState,
     feed: AuditFeed,
+    access: Access,
 ) -> std::io::Result<()> {
-    serve_all(addr, approvals, feed, None).await
+    serve_all(addr, approvals, feed, None, access).await
 }
 
 /// Serve the UI plus the egress dashboard (when `egress` is provided).
@@ -241,13 +250,17 @@ pub async fn serve_all(
     approvals: AppState,
     feed: AuditFeed,
     egress: Option<dashboard::EgressUi>,
+    access: Access,
 ) -> std::io::Result<()> {
     let listener = tokio::net::TcpListener::bind(addr).await?;
     // 종료 신호를 받으면 처리 중인 요청을 마친 뒤 닫는다. 승인 대기 중인
     // 요청이 응답 없이 끊기면 호출자 쪽에서 fail-closed 로 처리된다.
-    axum::serve(listener, router_with_dashboard(approvals, feed, egress))
-        .with_graceful_shutdown(shutdown::signal())
-        .await
+    axum::serve(
+        listener,
+        router_with_dashboard(approvals, feed, egress, access),
+    )
+    .with_graceful_shutdown(shutdown::signal())
+    .await
 }
 
 async fn audit_index(

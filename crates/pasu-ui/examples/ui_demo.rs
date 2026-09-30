@@ -62,11 +62,13 @@ async fn main() -> std::io::Result<()> {
     let feed = AuditFeed::new(64);
     let egress = EgressUi::new(EgressAdmin::new(&sock), Some(policy));
     let addr = "127.0.0.1:8787".parse().unwrap();
+    let access = pasu_ui::Access::generate().map_err(std::io::Error::other)?;
     println!(
-        "pasu UI demo: http://{addr}/egress  (mock socket {})",
+        "pasu UI demo: {}  (mock socket {})",
+        access.login_url(addr),
         sock.display()
     );
-    pasu_ui::serve_all(addr, approver.state(), feed, Some(egress)).await
+    pasu_ui::serve_all(addr, approver.state(), feed, Some(egress), access).await
 }
 
 fn handle(line: &str, allow: &Allow) -> String {

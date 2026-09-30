@@ -95,6 +95,9 @@ fn touch(slot: Option<&mut Value>, f: &mut dyn FnMut(&str) -> Option<String>) {
 /// same API also accepts. A tool result rides in `content` too, and it is the
 /// field most likely to carry a record an agent just read.
 fn openai(value: &mut Value, f: &mut dyn FnMut(&str) -> Option<String>) -> Option<()> {
+    if value.get("messages").is_none() {
+        return openai_responses(value, f);
+    }
     let messages = value.get_mut("messages")?.as_array_mut()?;
     for message in messages {
         match message.get_mut("content") {
@@ -102,6 +105,29 @@ fn openai(value: &mut Value, f: &mut dyn FnMut(&str) -> Option<String>) -> Optio
             Some(Value::Array(parts)) => walk_parts(parts, "text", f),
             _ => {}
         }
+    }
+    Some(())
+}
+
+/// Responses API: `{"instructions":…,"input":"…" | [items]}`. An item is a
+/// message (`content`, a string or parts) or a tool's result
+/// (`function_call_output.output`), which is where what a tool read comes back.
+fn openai_responses(value: &mut Value, f: &mut dyn FnMut(&str) -> Option<String>) -> Option<()> {
+    touch(value.get_mut("instructions"), f);
+    match value.get_mut("input")? {
+        Value::String(_) => touch(value.get_mut("input"), f),
+        Value::Array(items) => {
+            for item in items {
+                for field in ["content", "output"] {
+                    match item.get_mut(field) {
+                        Some(Value::String(_)) => touch(item.get_mut(field), f),
+                        Some(Value::Array(parts)) => walk_parts(parts, "text", f),
+                        _ => {}
+                    }
+                }
+            }
+        }
+        _ => return None,
     }
     Some(())
 }
@@ -222,5 +248,28 @@ mod tests {
     fn an_unknown_shape_says_so_rather_than_guessing() {
         assert!(prompt_text(b"not json", &Provider::OpenAi).is_none());
         assert!(prompt_text(br#"{"other":1}"#, &Provider::OpenAi).is_none());
+    }
+
+    /// A Responses API request was "an unknown shape", so with an inspector on
+    /// it would be refused outright, and without one read by nothing.
+    #[test]
+    fn responses_input_and_tool_output_are_found() {
+        let body = br#"{"model":"m","instructions":"be careful","input":[
+            {"role":"user","content":[{"type":"input_text","text":"hello"}]},
+            {"type":"function_call_output","call_id":"c1","output":"customer 900101-1234567"}
+        ]}"#;
+
+        let text = prompt_text(body, &Provider::OpenAi).expect("a known shape");
+
+        assert!(text.iter().any(|t| t == "be careful"));
+        assert!(text.iter().any(|t| t == "hello"));
+        assert!(
+            text.iter().any(|t| t.contains("900101-1234567")),
+            "{text:?}"
+        );
+        assert_eq!(
+            prompt_text(br#"{"input":"plain"}"#, &Provider::OpenAi),
+            Some(vec!["plain".to_string()])
+        );
     }
 }

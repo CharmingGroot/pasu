@@ -129,6 +129,7 @@ fn proxy_app_with(
         provider: Arc::new(Provider::OpenAi),
         inspectors,
         redaction,
+        options: Default::default(),
     });
     router(state)
 }

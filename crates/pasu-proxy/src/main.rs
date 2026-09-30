@@ -98,6 +98,21 @@ struct Opt {
     /// legitimate long completions.
     #[clap(long, default_value_t = 120)]
     read_timeout_secs: u64,
+    /// Refuse a request body larger than this many bytes.
+    #[clap(long, default_value_t = pasu_proxy::proxy::DEFAULT_MAX_REQUEST_BYTES)]
+    max_request_bytes: usize,
+    /// Refuse a response body larger than this many bytes instead of buffering
+    /// it. The read timeout is an idle one, so this is what bounds a stream
+    /// that never stops sending.
+    #[clap(long, default_value_t = pasu_proxy::proxy::DEFAULT_MAX_RESPONSE_BYTES)]
+    max_response_bytes: usize,
+    /// Forward this path (no query) without any inspection. Repeatable.
+    ///
+    /// Endpoints the provider format does not name — embeddings, files,
+    /// batches — are refused, because a path the proxy cannot read is one it
+    /// cannot guard. This is how an operator decides otherwise for one of them.
+    #[clap(long, value_name = "PATH")]
+    passthrough_path: Vec<String>,
 }
 
 /// The request-side inspectors an operator asked for, and a line per inspector
@@ -194,6 +209,19 @@ fn inspectors(opt: &Opt) -> anyhow::Result<Vec<Arc<dyn pasu_core::Inspector>>> {
     Ok(chosen)
 }
 
+/// Size limits and exceptions, and a line for each exception: a path forwarded
+/// uninspected is a hole the operator should see every time the proxy starts.
+fn proxy_options(opt: &Opt) -> pasu_proxy::ProxyOptions {
+    for path in &opt.passthrough_path {
+        eprintln!("pasu-proxy: {path} is forwarded WITHOUT inspection (--passthrough-path)");
+    }
+    pasu_proxy::ProxyOptions {
+        max_request_bytes: opt.max_request_bytes,
+        max_response_bytes: opt.max_response_bytes,
+        passthrough_paths: opt.passthrough_path.clone(),
+    }
+}
+
 fn parse_provider(s: &str) -> anyhow::Result<Provider> {
     match s {
         "openai" => Ok(Provider::OpenAi),
@@ -265,6 +293,7 @@ async fn main() -> anyhow::Result<()> {
     // must stop startup rather than be discovered on the first request.
     let chosen_inspectors = inspectors(&opt)?;
     let redaction = redaction_policy(&opt);
+    let options = proxy_options(&opt);
     // 타임아웃이 없으면 응답하지 않는 업스트림이 요청을 무한히 붙잡고,
     // 커넥션이 쌓여 프록시가 가용성 병목이 된다. 다만 전체(total) 타임아웃은
     // 긴 생성·스트리밍을 잘라내므로 연결/유휴로 나눠 건다.
@@ -283,6 +312,7 @@ async fn main() -> anyhow::Result<()> {
         // HITL: serve the approval UI and route `Ask` through it.
         Some(ui) => {
             let ui_addr: SocketAddr = ui.parse().with_context(|| format!("parse --ui {ui:?}"))?;
+            let access = pasu_ui::Access::generate().context("UI access token")?;
             let approver = UiApprover::new();
             let approvals = approver.state();
             let feed = AuditFeed::new(AUDIT_FEED_CAP);
@@ -296,10 +326,16 @@ async fn main() -> anyhow::Result<()> {
                 provider: Arc::new(provider),
                 inspectors: chosen_inspectors.clone(),
                 redaction: redaction.clone(),
+                options: options.clone(),
             });
-            eprintln!("pasu-proxy HITL approval UI on http://{ui_addr}");
+            // The token is the only thing standing between the guarded agent
+            // and its own approvals — it reaches loopback. Printed once, here.
+            eprintln!(
+                "pasu-proxy HITL approval UI on {}",
+                access.login_url(ui_addr)
+            );
             tokio::try_join!(serve_proxy(state, &opt.listen), async {
-                pasu_ui::serve(ui_addr, approvals, feed)
+                pasu_ui::serve(ui_addr, approvals, feed, access)
                     .await
                     .context("serve ui")
             })?;
@@ -314,6 +350,7 @@ async fn main() -> anyhow::Result<()> {
                 provider: Arc::new(provider),
                 inspectors: chosen_inspectors.clone(),
                 redaction: redaction.clone(),
+                options: options.clone(),
             });
             serve_proxy(state, &opt.listen).await?;
         }

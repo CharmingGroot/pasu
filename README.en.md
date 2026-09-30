@@ -80,7 +80,7 @@ Tool-call guard, kernel egress, and audit on a single self-hosted box:
 - **Requires kernel privileges** — the eBPF layer needs root or CAP_BPF (the proxy layer runs unprivileged).
 - **Proxy layer is bypassable on its own** — a tool that opens its own socket is invisible to the proxy; the kernel layer covers that case.
 - **The kernel layer is L3/L4** — IP/domain level, and it cannot see inside TLS. Exfiltration to an already-allowed domain is not stopped by the allowlist; content inspection on that path is the proxy layer's job (below).
-- **Content inspection only sees request shapes the proxy parses** — an `Inspector` reads prompt text extracted per provider. A body that does not parse is forwarded untouched, and traffic a tool sends without going through the proxy is bounded by address alone at the kernel layer.
+- **Content inspection only sees request shapes the proxy parses** — an `Inspector` reads prompt text extracted per provider. With an inspector on, a body that does not parse is refused, and an endpoint the provider format does not name (embeddings, files, batches) is not sent at all unless the operator names it with `--passthrough-path`. Traffic a tool sends without going through the proxy is bounded by address alone at the kernel layer.
 - **Detection is regex and checksums** — no NER model runs. A path that executes per message cannot afford one, so PII without a pattern (a person's name) is not caught.
 - **Redaction is one-way** — a value is replaced with a placeholder and no original is kept anywhere, so nothing can restore it and the proxy never becomes a store of the data it exists to stop. Restoring values in the reply is a different security posture and a separate decision.
 - **No response-side masking** — PII the model generates is out of scope. This is the request path only.
@@ -140,14 +140,24 @@ let state = Arc::new(ProxyState {
 let app = router(state);   // axum Router — serve it, then point the agent's base_url at it
 ```
 
-Supports OpenAI-compatible, Anthropic, and Gemini (the three formats cover
-effectively every SDK), for both non-streaming and streaming (SSE) responses —
-SSE deltas are reassembled and judged by the same policy, with the full stream
-buffered before relay.
+Supports OpenAI-compatible (Chat Completions and the Responses API), Anthropic,
+and Gemini (the three formats cover effectively every SDK), for both
+non-streaming and streaming (SSE) responses — SSE deltas are reassembled and
+judged by the same policy, with the full stream buffered before relay.
+
+Only endpoints the format names are forwarded. A completion response that does
+not read as that format — an unknown shape, a broken stream, a compressed body —
+is refused, since its tool calls could not be checked, and an unknown path is
+refused before it leaves. Provider errors (4xx/5xx) are relayed with their
+status and headers. `--max-request-bytes` (32 MiB) and `--max-response-bytes`
+(64 MiB) bound both directions.
 
 Run the binary with `--ui <addr>` to attach human-in-the-loop approval — a web
 queue (`/`) for pending `Ask` verdicts plus an audit view (`/audit`). Without
-it, `Ask` fails closed.
+it, `Ask` fails closed. The UI prints a URL carrying an access token once at
+startup, and only a browser that opened it can approve: the kernel layer always
+passes loopback, so without the token the guarded agent could approve its own
+calls.
 
 Deploy it as a sidecar — a slim, **unprivileged** image
 ([`deploy/proxy/Dockerfile`](deploy/proxy/Dockerfile)) and an agent + proxy pod

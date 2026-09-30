@@ -43,6 +43,66 @@ All notable changes to pasu are documented here. The format follows
   The placeholder preserves neither length nor shape; a mask that did would leak
   the value it hid. ([#102](https://github.com/CharmingGroot/pasu/issues/102))
 
+### Security
+
+- **The approval UI answers only to whoever started it.** Any process that could
+  reach its port could approve a pending `Ask` with one form post, and ids are
+  sequential. The guarded agent can reach it: the kernel layer always passes
+  loopback, so an allowed shell tool was enough to approve the agent's own
+  calls, and on the dashboard to add an address to the kernel allowlist. Any web
+  page the operator had open could do the same cross-site. Every UI request now
+  needs a token generated at startup; the printed URL carries it once, after
+  which it lives in a `SameSite=Strict`, `HttpOnly` cookie, and a state change
+  whose `Origin` names another host is refused. `pasu_ui::router`, `serve` and
+  `serve_all` take an `Access`; there is no unauthenticated form.
+
+- **Tool calls in the OpenAI Responses API were not guarded at all.** The
+  parser read Chat Completions only, and every field of that shape defaulted, so
+  a Responses body parsed as "a completion with no tool calls". An agent on the
+  Responses API — the default for OpenAI's own agent tooling — ran a
+  `function_call`, `local_shell_call` or `custom_tool_call` under a `default:
+  deny` policy. `output[]` items are now read, streamed and not; any `*_call`
+  item the provider does not execute itself is a tool call, including types
+  newer than this code. The same gap covered the deprecated `function_call`
+  field of Chat Completions and Gemini's `streamGenerateContent` answered as a
+  JSON array; both are read now.
+- **A stream event the parser did not understand was skipped, and a tool call
+  with it.** Several `data:` lines in one event — valid SSE — were read as
+  separate JSON documents and dropped. Events are now framed as the SSE spec
+  frames them, and data that is not JSON, or argument fragments that belong to
+  no named call, make the stream unreadable instead of silently shorter.
+- **OpenAI tool arguments reach the guard decoded.** They arrive as a JSON
+  string the model wrote, escapes included; `\u002fetc` is `/etc` to the agent
+  but not to a rule reading the raw string. Arguments that parse are
+  re-serialized before the guard sees them, as Anthropic and Gemini arguments
+  already were.
+
+- **The proxy forwards only endpoints it can guard, and refuses what it cannot
+  read.** Every path went upstream, and a completion response that did not parse
+  was relayed unchecked — so a body in a shape the parser did not know carried
+  its tool calls straight to the agent, and `/v1/files` or `/v1/embeddings`
+  carried a prompt past every inspector. `WireFormat::route` now names each
+  endpoint: a completion's response must parse or it is refused; token counting
+  is screened but not parsed; model listing passes; anything else is refused
+  before it leaves, unless the operator names it with `--passthrough-path`,
+  which is announced at every start. With an inspector on, a prompt that cannot
+  be read is refused rather than sent unread, and Responses API prompts
+  (`input`, `instructions`, tool output) are read. Provider errors are relayed
+  with their status and headers instead of being judged. The default `route`
+  treats every path as a completion, so an out-of-tree format gets the strict
+  reading.
+- **The upstream is asked for an uncompressed body.** Client headers went
+  upstream as sent, `Accept-Encoding: gzip` included, and a compressed response
+  is bytes the parser cannot read. The proxy now sends `Accept-Encoding:
+  identity`, drops hop-by-hop headers (including those a `Connection` header
+  lists), and refuses a completion the provider compressed anyway: what was
+  checked must be what the agent decodes.
+- **Both directions are bounded.** axum's 2 MiB request default refused vision
+  payloads and long contexts, and the response was buffered without limit — the
+  read timeout is idle-only, so a stream that kept sending was buffered forever.
+  `--max-request-bytes` (32 MiB) and `--max-response-bytes` (64 MiB) set both; a
+  response over the cap is refused, not truncated.
+
 ### Fixed
 
 - **No binary could print its own help.** `--help` answered `error: unexpected
@@ -58,8 +118,9 @@ All notable changes to pasu are documented here. The format follows
 - **Detection is regex and checksums.** No NER model runs — a path executing per
   message cannot afford one — so PII without a pattern, such as a person's name,
   is not caught.
-- Content inspection sees only request shapes the proxy parses. A body that does
-  not parse is forwarded untouched.
+- Content inspection sees only request shapes the proxy parses. With an
+  inspector on, a body that does not parse is refused; a path named with
+  `--passthrough-path` is forwarded uninspected by the operator's choice.
 
 ## [0.2.0] - 2026-08-26
 
