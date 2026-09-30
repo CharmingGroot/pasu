@@ -351,3 +351,30 @@ async fn over_grpc_a_denied_tool_call_ends_the_stream_with_a_403() {
     assert_eq!(i.status.unwrap().code, 403);
     assert!(String::from_utf8_lossy(&i.body).contains("shell"));
 }
+
+/// Both wrong settings in one refusal, named the way each data plane spells
+/// them: a message that reveals one mistake per round trip is how a guard gets
+/// switched off in frustration instead of configured.
+#[tokio::test]
+async fn a_misconfiguration_names_every_wrong_mode_in_every_spelling() {
+    let mut m = chat_headers();
+    m.protocol_config = Some(ProtocolConfiguration {
+        request_body_mode: BodySendMode::None as i32,
+        response_body_mode: BodySendMode::None as i32,
+        send_body_without_waiting_for_header_response: false,
+    });
+    let step = Session::default().handle(&judge(true, false), m).await;
+    let Some(Reply::ImmediateResponse(i)) = step.into_responses().pop().and_then(|r| r.response)
+    else {
+        panic!("not refused");
+    };
+    let body = String::from_utf8_lossy(&i.body);
+    for needle in [
+        "response_body_mode",
+        "request_body_mode",
+        "processingMode",
+        "responseBodyMode",
+    ] {
+        assert!(body.contains(needle), "{needle} missing from {body}");
+    }
+}

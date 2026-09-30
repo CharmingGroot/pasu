@@ -279,7 +279,7 @@ impl Session {
             }
             Route::Completion | Route::RequestOnly => {
                 if let Some(problem) = self.misconfigured(route, !judge.inspectors.is_empty()) {
-                    return refuse(STATUS_MISCONFIGURED, problem);
+                    return refuse(STATUS_MISCONFIGURED, &problem);
                 }
                 let mut r = reply(Reply::RequestHeaders(HeadersResponse {
                     response: Some(CommonResponse {
@@ -315,22 +315,26 @@ impl Session {
     /// whole. Without this, `response_body_mode: NONE` would let every tool
     /// call through unseen — the server cannot judge what it is never sent —
     /// and `BUFFERED_PARTIAL` would show it only the first part.
-    fn misconfigured(&self, route: Route, inspecting: bool) -> Option<&'static str> {
+    fn misconfigured(&self, route: Route, inspecting: bool) -> Option<String> {
         let p = self.protocol?;
+        let mut wrong = Vec::new();
         if route == Route::Completion && !shows_whole_body(p.response_body_mode) {
-            return Some(
-                "pasu: ext_proc response_body_mode must be BUFFERED, STREAMED or \
-                 FULL_DUPLEX_STREAMED, or tool calls in completions would never be judged",
-            );
+            wrong.push("response_body_mode (tool calls in completions would never be judged)");
         }
         if inspecting && !shows_whole_body(p.request_body_mode) {
-            return Some(
-                "pasu: ext_proc request_body_mode must be BUFFERED, STREAMED or \
-                 FULL_DUPLEX_STREAMED while an inspector is on, or prompts would never be \
-                 screened",
-            );
+            wrong.push("request_body_mode (prompts would never be screened)");
         }
-        None
+        if wrong.is_empty() {
+            return None;
+        }
+        // Every wrong setting at once, in each data plane's own spelling: one
+        // round trip per mistake is how a guard gets switched off instead.
+        Some(format!(
+            "pasu: ext_proc {} must be BUFFERED, STREAMED or FULL_DUPLEX_STREAMED \
+             (Envoy Gateway: processingMode.request/response.body; agentgateway: \
+             processingOptions.requestBodyMode/responseBodyMode)",
+            wrong.join(" and ")
+        ))
     }
 
     fn request_body<E: RuleEngine, A: Approver>(
