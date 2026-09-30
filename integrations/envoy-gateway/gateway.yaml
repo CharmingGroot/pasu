@@ -1,0 +1,33 @@
+# An ordinary Gateway API setup: one listener, one route to the provider.
+# Replace the HTTPRoute backend with your provider (for an https provider, add
+# a Backend + BackendTLSPolicy — standard Envoy Gateway, nothing pasu-specific).
+apiVersion: gateway.networking.k8s.io/v1
+kind: GatewayClass
+metadata:
+  name: pasu-eg
+spec:
+  controllerName: gateway.envoyproxy.io/gatewayclass-controller
+---
+apiVersion: gateway.networking.k8s.io/v1
+kind: Gateway
+metadata:
+  name: llm
+  namespace: pasu
+spec:
+  gatewayClassName: pasu-eg
+  listeners:
+  - name: http
+    protocol: HTTP
+    port: 80
+---
+apiVersion: gateway.networking.k8s.io/v1
+kind: HTTPRoute
+metadata:
+  name: llm
+  namespace: pasu
+spec:
+  parentRefs: [{ name: llm }]
+  rules:
+  - matches: [{ path: { type: PathPrefix, value: / } }]
+    backendRefs: [{ name: mock-provider, port: 8080 }]
+    timeouts: { request: 300s }

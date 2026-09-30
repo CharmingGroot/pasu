@@ -8,6 +8,21 @@ All notable changes to pasu are documented here. The format follows
 
 ### Added
 
+- **The ext_proc server accepts `STREAMED` and `FULL_DUPLEX_STREAMED` bodies.**
+  It refused them (500), and agentgateway defaults to full duplex while Envoy
+  Gateway offers `Streamed`. pasu still sees the whole body before any of it
+  goes on: under `STREAMED` each piece is answered by clearing it and the last
+  one carries the whole body; under `FULL_DUPLEX_STREAMED` nothing is answered
+  — the response headers included — until the body is whole, then it goes back
+  in pieces of at most 64 KiB. `max_request_bytes` / `max_response_bytes`
+  bound what is held. A body pasu does not judge streams through untouched.
+  `NONE` and `BUFFERED_PARTIAL` are still refused for a route pasu judges, as
+  is a held body that ends in trailers. Measured with Envoy 1.38: a streamed
+  `shell` tool call is a clean 403 under full duplex and, under `STREAMED`,
+  200 headers followed by a reset — the headers have left before the body is
+  judged — with no tool-call byte reaching the client either way; a Korean RRN
+  split across request pieces reached the provider in neither mode, and
+  `--redact` delivered it redacted.
 - **pasu plugs into Envoy and LiteLLM.** One judge — the same policy, audit
   stream and HITL — now answers three front-ends, chosen with `--frontend`:
   - `reverse` (the default, unchanged): agents point `base_url` at pasu.
@@ -31,6 +46,20 @@ All notable changes to pasu are documented here. The format follows
   Examples and a coverage table are in `integrations/`. The `ext-proc` feature
   (on by default) pins `envoy-types` 0.7.3 and `tonic` 0.14.5, the last releases
   within the 1.86 MSRV.
+- **agentgateway example.** `integrations/agentgateway/config.yaml`, verified
+  against agentgateway 1.5.0: with `buffered` bodies a denied tool call —
+  streamed or not — is a 403 before any byte reaches the client, and the same
+  holds in its default `fullDuplexStreamed` mode now that pasu holds streamed
+  bodies whole. A stopped pasu is a 500 under the default
+  `failureMode: failClosed`; `failOpen` let a denied tool call through.
+- **Envoy Gateway manifests, measured.** `integrations/envoy-gateway/` attaches
+  pasu with an `EnvoyExtensionPolicy` (both bodies `Buffered`) and a
+  `ClientTrafficPolicy` buffer limit — the 32 KiB default refused a 100 KiB
+  prompt (413) and a 256 KiB completion (500). Verified on Envoy Gateway v1.9.2:
+  a denied tool call, streamed or not, is refused before the client sees a
+  byte; `/v1/embeddings` and an RRN prompt before the provider sees them; an
+  unreachable pasu is a 500. Leaving out `processingMode` sends pasu nothing and lets everything
+  through; the README says so.
 - **The proxy inspects requests, not only responses.** It forwarded every
   request untouched, so a prompt carrying whatever an agent had just read out of
   a file or a database row reached the provider unexamined. The kernel layer
@@ -128,6 +157,12 @@ All notable changes to pasu are documented here. The format follows
 
 ### Fixed
 
+- **An ext_proc misconfiguration is no longer reported as a policy block.**
+  The 500 for a data plane that would never show pasu a body carried
+  `pasu_policy_block`, so an alert on blocks fired on a configuration error
+  and a dashboard of blocks hid one. It is `pasu_misconfigured` now, and it
+  names every wrong body mode in the Envoy, Envoy Gateway and agentgateway
+  spellings.
 - **A redacted request no longer overwrites text in other messages.** Findings
   from every message were pooled and each message was redacted with all of
   them, so a span found in one message replaced the bytes at the same offset in

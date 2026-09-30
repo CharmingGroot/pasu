@@ -40,6 +40,10 @@ static_resources:
               # UI (--ui) an Ask waits for a person: set this above the
               # approval timeout (120 s), or the wait ends as a 504.
               message_timeout: 10s
+              # STREAMED and FULL_DUPLEX_STREAMED (with both trailer modes SEND)
+              # work too — pasu holds the body itself; see integrations/README.md
+              # for what a refusal looks like in each. NONE and BUFFERED_PARTIAL
+              # are refused.
               processing_mode:
                 request_header_mode: SEND    # routing; asks upstream for identity encoding
                 response_header_mode: SEND   # status, content type, encoding
