@@ -64,6 +64,11 @@ rely on it.) Use `BUFFERED` or
 body only once it is whole, as with `BUFFERED`: a streamed completion arrives
 all at once, not token by token.
 
+A denied prompt is a clean 403 in every mode, but in `STREAMED` and
+`FULL_DUPLEX_STREAMED` the request headers go upstream before the prompt is
+judged: the provider sees a request open and then reset, and none of its body.
+Use `BUFFERED` if the provider must not see a refused request at all.
+
 `FULL_DUPLEX_STREAMED` needs `request_trailer_mode: SEND` and
 `response_trailer_mode: SEND`; Envoy rejects the configuration without them.
 It also has no `message_timeout`, which is what lets pasu hold the response
@@ -90,11 +95,11 @@ request body and drop an earlier filter's mutation (agent-router#2671).
 `spec.traffic.extProc`. The settings that matter
 ([docs](https://agentgateway.dev/docs/standalone/latest/configuration/traffic-management/extproc/)):
 
-- `processingOptions.requestBodyMode` and `responseBodyMode`: **`buffered`**.
-  Both default to `fullDuplexStreamed`. agentgateway reports its body modes to
-  pasu, so with the default — or `bufferedPartial`, or `responseBodyMode: none`
-  — every completion is refused with a 500 naming the setting, before the
-  request reaches the provider. `allowModeOverride: true` does not change that.
+- `processingOptions.requestBodyMode` and `responseBodyMode`: the default
+  `fullDuplexStreamed` or `buffered` both work. agentgateway reports its body
+  modes to pasu, and pasu holds a judged body whole in either. `bufferedPartial`
+  and `responseBodyMode: none` are refused with a 500 naming the setting, before
+  the request reaches the provider.
 - `failureMode: failClosed` (the default). Never `failOpen`: with pasu stopped
   it forwarded every case below, the denied tool call included.
 - `frontendPolicies.http.maxBufferSize` large enough for your prompts and
@@ -109,11 +114,16 @@ Measured with agentgateway 1.5.0 and a plain-HTTP mock provider:
 
 | Case | `buffered` | default (`fullDuplexStreamed`) | pasu stopped |
 |---|---|---|---|
-| text completion | 200 | 500, not forwarded | 500 `ext_proc failed`, not forwarded |
-| `shell` tool call | 403, no tool-call byte | 500, not forwarded | 500, not forwarded |
-| `shell` tool call, streamed | 403, no tool-call byte | 500, not forwarded | 500, not forwarded |
+| text completion | 200 | 200 | 500 `ext_proc failed`, not forwarded |
+| `shell` tool call | 403, no tool-call byte | 403, no tool-call byte | 500, not forwarded |
+| `shell` tool call, streamed | 403, no tool-call byte | 403, no tool-call byte | 500, not forwarded |
 | `POST /v1/embeddings` | 403, not forwarded | 403, not forwarded | 500, not forwarded |
-| prompt with a resident registration number | 403, not forwarded | 500, not forwarded | 500, not forwarded |
+| prompt with a resident registration number | 403, not forwarded | 403, **body** not forwarded | 500, not forwarded |
+
+In full duplex the request headers go upstream before the body is judged, so
+a refused prompt still opens a request at the provider — its path and headers
+arrive, its body never does. Use `buffered` if the provider must not see the
+request at all.
 
 ## LiteLLM
 

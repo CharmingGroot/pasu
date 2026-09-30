@@ -32,7 +32,10 @@ routes:
       processingOptions:
         requestHeaderMode: send     # routing; asks upstream for identity encoding
         responseHeaderMode: send    # status, content type, encoding
-        # Both default to fullDuplexStreamed, which pasu refuses (500) rather
-        # than judge in pieces. bufferedPartial is refused the same way.
-        requestBodyMode: buffered   # prompt screening needs the whole body
-        responseBodyMode: buffered  # tool calls are judged before the client sees any byte
+        # buffered or the default fullDuplexStreamed: pasu holds a judged body
+        # whole in both (verified on 1.5.0). With fullDuplexStreamed a refused
+        # prompt's headers still reach the provider, its body does not; use
+        # buffered if the provider must not see the request at all.
+        # bufferedPartial and none are refused (500).
+        requestBodyMode: buffered
+        responseBodyMode: buffered

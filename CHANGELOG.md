@@ -48,9 +48,10 @@ All notable changes to pasu are documented here. The format follows
   within the 1.86 MSRV.
 - **agentgateway example.** `integrations/agentgateway/config.yaml`, verified
   against agentgateway 1.5.0: with `buffered` bodies a denied tool call —
-  streamed or not — is a 403 before any byte reaches the client. Its default
-  `fullDuplexStreamed` mode is refused (500) before the request is forwarded,
-  and a stopped pasu is a 500 under the default `failureMode: failClosed`.
+  streamed or not — is a 403 before any byte reaches the client, and the same
+  holds in its default `fullDuplexStreamed` mode now that pasu holds streamed
+  bodies whole. A stopped pasu is a 500 under the default
+  `failureMode: failClosed`; `failOpen` let a denied tool call through.
 - **The proxy inspects requests, not only responses.** It forwarded every
   request untouched, so a prompt carrying whatever an agent had just read out of
   a file or a database row reached the provider unexamined. The kernel layer
