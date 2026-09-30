@@ -175,11 +175,17 @@ envoy_running() {
   [[ "$(docker inspect -f '{{.State.Running}}' "$CONTAINER" 2>/dev/null)" == true ]]
 }
 
-# start_envoy <BUFFERED|NONE>
+# start_envoy <BUFFERED|NONE|STREAMED|FULL_DUPLEX_STREAMED>
+# The response body mode; the request body follows it (NONE keeps the request
+# BUFFERED, so only the response side is misconfigured). Full duplex needs
+# both trailer modes SEND — Envoy refuses the config otherwise.
 start_envoy() {
-  local cfg="$WORK/envoy-$1.yaml" admin_addr=127.0.0.1
+  local cfg="$WORK/envoy-$1.yaml" admin_addr=127.0.0.1 req=$1 trailers=SKIP
+  [[ "$1" == NONE ]] && req=BUFFERED
+  [[ "$1" == FULL_DUPLEX_STREAMED ]] && trailers=SEND
   [[ "$NETWORK" == bridge ]] && admin_addr=0.0.0.0
-  sed -e "s/@RESPONSE_BODY_MODE@/$1/" \
+  sed -e "s/@RESPONSE_BODY_MODE@/$1/" -e "s/@REQUEST_BODY_MODE@/$req/" \
+    -e "s/@TRAILER_MODE@/$trailers/" \
     -e "s/@ADMIN_ADDR@/$admin_addr/" -e "s/@ADMIN_PORT@/$ADMIN_PORT/" \
     -e "s/@LISTEN_ADDR@/$ENVOY_ADDR/" -e "s/@LISTEN_PORT@/$ENVOY_PORT/" \
     -e "s/@UPSTREAM_HOST@/$UPSTREAM_HOST/g" \
@@ -403,8 +409,8 @@ run_misconfigured() {
   begin none-shell-refused
   send POST /v1/chat/completions "$(chat 'TOOL_SHELL please')"
   check "500 (pasu refuses a completion it would never be shown)" status_is 500
-  check "pasu_policy_block JSON naming the setting" \
-    py_check 'pasu_block() and b"response_body_mode" in b'
+  check "pasu_misconfigured JSON naming the setting (not a policy block)" \
+    py_check 'json.loads(b)["error"]["type"] == "pasu_misconfigured" and b"response_body_mode" in b'
   check "never reached the provider" reached_times 0
   end
 
@@ -429,6 +435,83 @@ run_pasu_down() {
   stop_envoy
 }
 
+# ---- phase 6: streamed body modes -------------------------------------------
+# pasu holds a judged body whole in STREAMED and FULL_DUPLEX_STREAMED too. What
+# differs is the shape of a refused *streamed completion*: under STREAMED the
+# response headers are already downstream, so Envoy resets the stream instead
+# of answering 403 — still with no tool-call byte delivered. And in both modes
+# the request headers reach the provider before the prompt is judged, so a
+# refused prompt opens a request upstream whose body never arrives.
+
+run_streamed_mode() { # run_streamed_mode <STREAMED|FULL_DUPLEX_STREAMED>
+  local mode=$1 tag
+  tag=$(echo "$1" | tr '[:upper:]_' '[:lower:]-')
+  PHASE=$tag
+  log "== phase: Envoy $mode, pasu --block-pii-kr =="
+  start_pasu --block-pii-kr
+  start_envoy "$mode"
+
+  begin "$tag-text-completion"
+  send POST /v1/chat/completions "$(chat 'say hello')"
+  check "200" status_is 200
+  check "the text reply, unchanged" py_check 'len(r) == 1 and b == r[-1]["sent"].encode()'
+  end
+
+  begin "$tag-text-completion-streamed"
+  send POST /v1/chat/completions "$(chat 'say hello' true)"
+  check "200" status_is 200
+  check "every SSE data line intact (byte-equal to what the provider sent)" \
+    py_check 'len(r) == 1 and b == r[-1]["sent"].encode() and b.endswith(b"data: [DONE]\n\n")'
+  end
+
+  begin "$tag-shell-tool-call"
+  send POST /v1/chat/completions "$(chat 'TOOL_SHELL please')"
+  check "the model did answer with the tool call" reached_times 1
+  check "no tool call in what the client got" py_check 'b"call_1" not in b and b"rm -rf" not in b'
+  check "not delivered as a success" py_check 'pasu_block() or len(b) == 0'
+  end
+
+  begin "$tag-shell-tool-call-streamed"
+  send POST /v1/chat/completions "$(chat 'TOOL_SHELL please' true)"
+  check "the model did stream the tool call" reached_times 1
+  check "no SSE chunk delivered" py_check 'b"data:" not in b and b"call_1" not in b'
+  if [[ "$mode" == FULL_DUPLEX_STREAMED ]]; then
+    check "a clean 403 (pasu withholds the response headers in full duplex)" status_is 403
+    check "pasu_policy_block JSON" is_pasu_block
+  else
+    # A reset when the headers were already downstream; a clean 403 when the
+    # refusal beat them there (a small completion in one piece). Either way
+    # no tool-call byte — which is the invariant.
+    check "a reset with no body, or a clean 403" py_check 'len(b) == 0 or pasu_block()'
+  fi
+  end
+
+  begin "$tag-pii-rrn-large-prompt-refused"
+  # A prompt pasu receives in pieces, with the number in the first one:
+  # forwarding any piece before the whole is judged would send the number.
+  # Written to a file: one argument that size exceeds Linux's per-argument
+  # limit (128 KiB), so it goes to curl as @file.
+  python3 -c 'import json,sys; print(json.dumps({"model":"mock-gpt","messages":[{"role":"user","content":"주민번호 "+sys.argv[1]+" "+"x"*300000}]}, ensure_ascii=False))' \
+    "$RRN" >"$WORK/large-prompt.json"
+  # Sent in two pieces with a pause, the number in the first: curl would send
+  # it in one write and Envoy would hand pasu one piece.
+  python3 "$HERE/slow_post.py" 127.0.0.1 "$ENVOY_PORT" /v1/chat/completions \
+    "$WORK/large-prompt.json" "$WORK/$CASE.status" "$WORK/$CASE.body"
+  check "403" status_is 403
+  check "the number never reached the provider" py_check "all('$RRN' not in x['body'] for x in r)"
+  end
+
+  begin "$tag-pii-rrn-refused"
+  send POST /v1/chat/completions "$(chat "주민번호는 $RRN 입니다")"
+  check "403" status_is 403
+  check "pasu_policy_block JSON" is_pasu_block
+  check "the number never reached the provider" py_check "all('$RRN' not in x['body'] for x in r)"
+  end
+
+  stop_envoy
+  stop_pasu
+}
+
 log "pasu-proxy: $PASU_BIN"
 log "envoy:      $ENVOY_IMAGE"
 log "policy:     $POLICY"
@@ -440,6 +523,8 @@ run_pii_block
 run_pii_redact
 run_misconfigured
 run_pasu_down
+run_streamed_mode STREAMED
+run_streamed_mode FULL_DUPLEX_STREAMED
 
 log ""
 log "== summary: $PASSED passed, $FAILED failed =="

@@ -17,6 +17,7 @@ chunked the way a real provider streams it.
 import json
 import sys
 import threading
+import time
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
 MARKER_SHELL = "TOOL_SHELL"
@@ -24,6 +25,9 @@ MODEL = "mock-gpt"
 REPLY_TEXT = "hello from the mock provider"
 
 _record_lock = threading.Lock()
+
+
+EVENT_GAP_SECONDS = 0.05
 
 
 def prompt_text(body):
@@ -123,19 +127,33 @@ class Handler(BaseHTTPRequestHandler):
         sys.stderr.write("mock: " + (fmt % args) + "\n")
 
     def read_body(self):
-        if "chunked" in (self.headers.get("transfer-encoding") or "").lower():
-            body = b""
-            while True:
-                size = int(self.rfile.readline().split(b";")[0].strip() or b"0", 16)
-                if size == 0:
+        """The request body. A body cut off mid-way (the data plane reset the
+        request) is recorded as far as it arrived — "never reached the
+        provider" must count bytes that did, not only requests that finished —
+        and then the handler stops."""
+        body = b""
+        try:
+            if "chunked" in (self.headers.get("transfer-encoding") or "").lower():
+                while True:
+                    size = int(self.rfile.readline().split(b";")[0].strip() or b"0", 16)
+                    if size == 0:
+                        self.rfile.readline()
+                        return body
+                    piece = self.rfile.read(size)
+                    body += piece
+                    if len(piece) < size:
+                        raise ConnectionError("chunk cut short")
                     self.rfile.readline()
-                    return body
-                body += self.rfile.read(size)
-                self.rfile.readline()
-        length = int(self.headers.get("content-length") or 0)
-        return self.rfile.read(length) if length else b""
+            length = int(self.headers.get("content-length") or 0)
+            body = self.rfile.read(length) if length else b""
+            if len(body) < length:
+                raise ConnectionError("body cut short")
+            return body
+        except (ConnectionError, OSError, ValueError):
+            self.record(body, b"", truncated=True)
+            raise
 
-    def record(self, body, sent):
+    def record(self, body, sent, truncated=False):
         entry = {
             "method": self.command,
             "path": self.path,
@@ -146,6 +164,7 @@ class Handler(BaseHTTPRequestHandler):
             "body": body.decode("utf-8", "replace"),
             "prompt": prompt_text(body),
             "sent": sent.decode("utf-8", "replace"),
+            "truncated": truncated,
         }
         with _record_lock, open(self.record_path, "a", encoding="utf-8") as f:
             f.write(json.dumps(entry, ensure_ascii=False) + "\n")
@@ -170,6 +189,11 @@ class Handler(BaseHTTPRequestHandler):
         for event in events:
             self.wfile.write(b"%x\r\n%s\r\n" % (len(event), event))
             self.wfile.flush()
+            # A pause between events, as a model generating tokens has, so the
+            # data plane sees the stream in pieces. Without it Envoy coalesces
+            # a small stream into one piece and piece-by-piece holding is never
+            # exercised.
+            time.sleep(EVENT_GAP_SECONDS)
         self.wfile.write(b"0\r\n\r\n")
         self.wfile.flush()
 
