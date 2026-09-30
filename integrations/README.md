@@ -81,6 +81,12 @@ holds: over `max_request_bytes` a prompt is refused (413), over
 passthrough path, a provider error, a `count_tokens` response, a prompt with
 no inspector on — streams through as it arrives.
 
+These are checked against a real Envoy on every CI run:
+[`tests/e2e/envoy/run.sh`](../tests/e2e/envoy/run.sh) puts Envoy between curl
+and a mock provider, with pasu on the production ruleset, and asserts each
+refusal above — including that `NONE` is refused and that a stopped pasu is a
+500 — plus that a refused request never reached the provider.
+
 pasu asks the upstream for `accept-encoding: identity`, so no decompressor
 filter is needed. Envoy Gateway ([below](#envoy-gateway)) and agentgateway
 ([below](#agentgateway)) speak the same

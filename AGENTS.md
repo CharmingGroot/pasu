@@ -37,8 +37,21 @@ bpf toolchain to work on the portable crates. The kernel paths are validated by
 the privileged **eBPF E2E** CI job on a real Ubuntu kernel — you generally
 **cannot build the eBPF crates on macOS**, so lean on CI for those.
 
-CI is 4 jobs (all must be green): `fmt·clippy·test`, `eBPF build+unit`,
-`eBPF E2E` (privileged), `cargo-deny`.
+CI (`.github/workflows/ci.yml`) is 6 jobs, all must be green: `fmt·clippy·test`,
+`eBPF build+unit`, `eBPF E2E` (privileged), `Envoy ext_proc E2E`, `MSRV (1.86)`,
+`cargo-deny`. `pasu-pii-kr` has its own workflow (`pii.yml`: check + bench),
+run when that crate changes.
+
+The Envoy E2E is a script you can run locally too — it needs docker, curl and
+python3, builds nothing and pulls nothing:
+
+```bash
+cargo build -p pasu-proxy
+docker pull envoyproxy/envoy:v1.37.6
+tests/e2e/envoy/run.sh target/debug/pasu-proxy envoyproxy/envoy:v1.37.6
+```
+
+Ports and the docker network mode are env overrides (see the script header).
 
 ## Crate map (acyclic — everything depends only on `pasu-core`)
 

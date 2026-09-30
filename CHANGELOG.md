@@ -60,6 +60,14 @@ All notable changes to pasu are documented here. The format follows
   byte; `/v1/embeddings` and an RRN prompt before the provider sees them; an
   unreachable pasu is a 500. Leaving out `processingMode` sends pasu nothing and lets everything
   through; the README says so.
+- **An Envoy ext_proc E2E in CI** (`tests/e2e/envoy/run.sh`, job
+  `Envoy ext_proc E2E`, Envoy pinned to 1.37.6). The Envoy behaviour above was
+  checked by hand; it is now asserted on every run against a real Envoy and the
+  production ruleset — passthrough, text and streamed text intact, shell tool
+  calls (streamed or not) refused with no chunk delivered, unknown endpoints and
+  Korean RRNs refused before the provider, redaction with a matching
+  `content-length`, `identity` upstream, `response_body_mode: NONE` refused
+  (500), and a stopped pasu answered with a 500.
 - **The proxy inspects requests, not only responses.** It forwarded every
   request untouched, so a prompt carrying whatever an agent had just read out of
   a file or a database row reached the provider unexamined. The kernel layer
