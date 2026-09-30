@@ -39,6 +39,8 @@ already on the wire when the block arrives. Measured with LiteLLM 1.91:
   Envoy reports and refuses (500) a route whose body it would never see whole:
   with `response_body_mode: NONE` every tool call would otherwise pass unseen,
   and `BUFFERED_PARTIAL` shows only the first part.
+- A misconfiguration refusal is a 500 with `"type":"pasu_misconfigured"`; a
+  policy refusal is `"type":"pasu_policy_block"`. Alert on both, separately.
 - `failure_mode_allow: false` (the default). Never true.
 - `message_timeout` above the HITL approval timeout if you run `--ui`.
 - `per_connection_buffer_limit_bytes` large enough for your prompts and

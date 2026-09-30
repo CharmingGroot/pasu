@@ -157,6 +157,12 @@ All notable changes to pasu are documented here. The format follows
 
 ### Fixed
 
+- **An ext_proc misconfiguration is no longer reported as a policy block.**
+  The 500 for a data plane that would never show pasu a body carried
+  `pasu_policy_block`, so an alert on blocks fired on a configuration error
+  and a dashboard of blocks hid one. It is `pasu_misconfigured` now, and it
+  names every wrong body mode in the Envoy, Envoy Gateway and agentgateway
+  spellings.
 - **A redacted request no longer overwrites text in other messages.** Findings
   from every message were pooled and each message was redacted with all of
   them, so a span found in one message replaced the bytes at the same offset in

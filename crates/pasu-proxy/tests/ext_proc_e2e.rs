@@ -378,3 +378,38 @@ async fn a_misconfiguration_names_every_wrong_mode_in_every_spelling() {
         assert!(body.contains(needle), "{needle} missing from {body}");
     }
 }
+
+/// A misconfigured data plane is not a policy decision: a different error
+/// type, so an alert on `pasu_policy_block` neither fires on it nor hides it.
+#[tokio::test]
+async fn a_misconfiguration_is_not_reported_as_a_policy_block() {
+    let mut m = chat_headers();
+    m.protocol_config = Some(ProtocolConfiguration {
+        request_body_mode: BodySendMode::Buffered as i32,
+        response_body_mode: BodySendMode::None as i32,
+        send_body_without_waiting_for_header_response: false,
+    });
+    let step = Session::default().handle(&judge(false, false), m).await;
+    let Some(Reply::ImmediateResponse(i)) = step.into_responses().pop().and_then(|r| r.response)
+    else {
+        panic!("not refused");
+    };
+    let reply: serde_json::Value = serde_json::from_slice(&i.body).unwrap();
+    assert_eq!(reply["error"]["type"], "pasu_misconfigured");
+
+    let denied = run(
+        &judge(false, false),
+        vec![
+            chat_headers(),
+            body_msg_for_type_test(),
+            response_headers("200", &[]),
+            body(Phase::ResponseBody, tool_call_body("shell"), true),
+        ],
+    )
+    .await;
+    assert_eq!(denied, Some(403), "a policy refusal stays a 403");
+}
+
+fn body_msg_for_type_test() -> ProcessingRequest {
+    body(Phase::RequestBody, prompt("hi"), true)
+}

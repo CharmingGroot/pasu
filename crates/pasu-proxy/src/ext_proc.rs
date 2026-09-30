@@ -620,17 +620,28 @@ fn reply(r: Reply) -> ProcessingResponse {
     }
 }
 
+const POLICY_BLOCK: &str = "pasu_policy_block";
+/// A data plane configured so pasu cannot judge. Not a policy decision, and a
+/// different `type` so an operator's alert on blocks does not fire on it — or
+/// hide it.
+const MISCONFIGURED: &str = "pasu_misconfigured";
+
 /// A local reply shaped like the reverse proxy's refusal, so a client sees the
 /// same error whichever front-end stopped it.
 fn refuse(status: i32, message: &str) -> Step {
+    let kind = if status == STATUS_MISCONFIGURED {
+        MISCONFIGURED
+    } else {
+        POLICY_BLOCK
+    };
     let body = serde_json::json!({
-        "error": { "message": message, "type": "pasu_policy_block" }
+        "error": { "message": message, "type": kind }
     });
     Step::Refuse(reply(Reply::ImmediateResponse(ImmediateResponse {
         status: Some(HttpStatus { code: status }),
         headers: Some(set_header("content-type", "application/json")),
         body: body.to_string().into_bytes(),
-        details: "pasu_policy_block".into(),
+        details: kind.into(),
         ..ImmediateResponse::default()
     })))
 }
