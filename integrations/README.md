@@ -212,3 +212,16 @@ LiteLLM has a built-in `tool_permission` guardrail for name and argument
 patterns. pasu is for when the same policy must also bound the kernel egress
 layer, hold calls for a person (`Ask`), redact Korean PII, or feed one audit
 stream across every front-end.
+
+## Setup skill
+
+[`skills/pasu-setup/`](skills/pasu-setup/SKILL.md) is an agent skill that walks
+an operator through the above: find where the agent's LLM traffic goes, pick
+the front-end, draft `rules.yaml`, wire it from these examples, and **prove pasu
+is in the path** with a probe that fails when it is not (an embeddings call must
+come back as pasu's 403, not the provider's answer). Install it by copying the
+directory into `~/.claude/skills/` or a project's `.claude/skills/`.
+
+It configures the guard; it is not one. A skill is instructions to a model, and
+a model under prompt injection can ignore them — which is why every decision
+stays in the pasu process and the kernel layer.

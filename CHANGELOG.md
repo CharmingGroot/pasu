@@ -8,6 +8,10 @@ All notable changes to pasu are documented here. The format follows
 
 ### Added
 
+- **`integrations/skills/pasu-setup`** — an agent skill that switches pasu on:
+  finds where the agent's traffic goes, picks the front-end, drafts the policy,
+  and proves pasu is in the path with a probe that fails when it is not. It
+  configures the guard and decides nothing.
 - **The ext_proc server accepts `STREAMED` and `FULL_DUPLEX_STREAMED` bodies.**
   It refused them (500), and agentgateway defaults to full duplex while Envoy
   Gateway offers `Streamed`. pasu still sees the whole body before any of it
