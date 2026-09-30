@@ -46,6 +46,11 @@ All notable changes to pasu are documented here. The format follows
   Examples and a coverage table are in `integrations/`. The `ext-proc` feature
   (on by default) pins `envoy-types` 0.7.3 and `tonic` 0.14.5, the last releases
   within the 1.86 MSRV.
+- **agentgateway example.** `integrations/agentgateway/config.yaml`, verified
+  against agentgateway 1.5.0: with `buffered` bodies a denied tool call —
+  streamed or not — is a 403 before any byte reaches the client. Its default
+  `fullDuplexStreamed` mode is refused (500) before the request is forwarded,
+  and a stopped pasu is a 500 under the default `failureMode: failClosed`.
 - **The proxy inspects requests, not only responses.** It forwarded every
   request untouched, so a prompt carrying whatever an agent had just read out of
   a file or a database row reached the provider unexamined. The kernel layer

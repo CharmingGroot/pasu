@@ -1,0 +1,38 @@
+# yaml-language-server: $schema=https://agentgateway.dev/schema/config
+#
+# agentgateway (standalone) in front of an LLM provider, with pasu as the
+# ext_proc server.
+#
+# pasu side:
+#   pasu-proxy --frontend ext-proc --listen 0.0.0.0:8791 --policy rules.yaml [--block-pii-kr]
+#
+# The extProc policy below is the part that matters; the rest is an ordinary
+# agentgateway route. Verified against agentgateway 1.5.0 (standalone,
+# `agentgateway -f config.yaml`) with a plain-HTTP OpenAI-compatible provider.
+# Schema: https://agentgateway.dev/docs/standalone/latest/configuration/traffic-management/extproc/
+gateways:
+  default:
+    port: 3000
+# Buffered bodies count against this; agentgateway's default is 2 MiB, over
+# which it refuses (500 "body exceeded max buffer size") without forwarding.
+frontendPolicies:
+  http:
+    maxBufferSize: 67108864   # 64 MiB, pasu's own response cap
+routes:
+- backends:
+  # A plain-HTTP provider. For an HTTPS one, add a backendTLS policy to the
+  # backend (not part of what was verified here).
+  - host: provider:8000
+  policies:
+    extProc:
+      host: pasu:8791
+      # failClosed is the default: an unreachable pasu is a 500 and nothing
+      # reaches the provider. failOpen forwards everything unjudged — never.
+      failureMode: failClosed
+      processingOptions:
+        requestHeaderMode: send     # routing; asks upstream for identity encoding
+        responseHeaderMode: send    # status, content type, encoding
+        # Both default to fullDuplexStreamed, which pasu refuses (500) rather
+        # than judge in pieces. bufferedPartial is refused the same way.
+        requestBodyMode: buffered   # prompt screening needs the whole body
+        responseBodyMode: buffered  # tool calls are judged before the client sees any byte

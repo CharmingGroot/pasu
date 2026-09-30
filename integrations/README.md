@@ -7,7 +7,7 @@ through LiteLLM is denied through Envoy and through pasu's own reverse proxy.
 | You run | Attach pasu as | Start pasu with |
 |---|---|---|
 | nothing yet | the reverse proxy (`base_url` → pasu) | `--frontend reverse --upstream <provider>` |
-| [Envoy](envoy/) · Envoy Gateway · agentgateway | an **ext_proc** server | `--frontend ext-proc` |
+| [Envoy](envoy/) · Envoy Gateway · [agentgateway](agentgateway/) | an **ext_proc** server | `--frontend ext-proc` |
 | [LiteLLM](litellm/) proxy | a **guardrail** | `--frontend litellm` |
 
 ## What each one covers
@@ -76,16 +76,44 @@ no inspector on — streams through as it arrives.
 
 pasu asks the upstream for `accept-encoding: identity`, so no decompressor
 filter is needed. Envoy Gateway (`EnvoyExtensionPolicy.extProc`) and
-agentgateway (`spec.traffic.extProc`) speak the same protocol. pasu takes the
-body mode from the `protocol_config` the data plane sends, so agentgateway's
-default `FullDuplexStreamed` no longer needs changing — provided agentgateway
-reports it: a data plane that does not gets the `BUFFERED` treatment, and its
-pieces are refused (500) rather than judged. The measurements above are
-Envoy's; agentgateway itself has not been tested. Envoy Gateway's `Streamed`
-works with the reset described above, so prefer `Buffered` there.
-Behind Envoy AI Gateway, attach pasu
+agentgateway (see [agentgateway](#agentgateway) below) speak the same
+protocol. pasu takes the body mode from the `protocol_config` the data plane
+sends; Envoy Gateway's `Streamed` works with the reset described above, so
+prefer `Buffered` there. Behind Envoy AI Gateway, attach pasu
 before AI Gateway's own ext_proc if you redact: AI Gateway can rebuild the
 request body and drop an earlier filter's mutation (agent-router#2671).
+
+## agentgateway
+
+[`agentgateway/config.yaml`](agentgateway/config.yaml), standalone
+(`agentgateway -f config.yaml`); on Kubernetes the same options sit under
+`spec.traffic.extProc`. The settings that matter
+([docs](https://agentgateway.dev/docs/standalone/latest/configuration/traffic-management/extproc/)):
+
+- `processingOptions.requestBodyMode` and `responseBodyMode`: **`buffered`**.
+  Both default to `fullDuplexStreamed`. agentgateway reports its body modes to
+  pasu, so with the default — or `bufferedPartial`, or `responseBodyMode: none`
+  — every completion is refused with a 500 naming the setting, before the
+  request reaches the provider. `allowModeOverride: true` does not change that.
+- `failureMode: failClosed` (the default). Never `failOpen`: with pasu stopped
+  it forwarded every case below, the denied tool call included.
+- `frontendPolicies.http.maxBufferSize` large enough for your prompts and
+  completions. The default is 2 MiB; a larger buffered body is refused (500)
+  and not forwarded.
+
+pasu's `accept-encoding: identity` reaches the provider (a client's `gzip` was
+replaced), so no decompression is needed. A streamed completion reaches the
+client only once whole, as with Envoy.
+
+Measured with agentgateway 1.5.0 and a plain-HTTP mock provider:
+
+| Case | `buffered` | default (`fullDuplexStreamed`) | pasu stopped |
+|---|---|---|---|
+| text completion | 200 | 500, not forwarded | 500 `ext_proc failed`, not forwarded |
+| `shell` tool call | 403, no tool-call byte | 500, not forwarded | 500, not forwarded |
+| `shell` tool call, streamed | 403, no tool-call byte | 500, not forwarded | 500, not forwarded |
+| `POST /v1/embeddings` | 403, not forwarded | 403, not forwarded | 500, not forwarded |
+| prompt with a resident registration number | 403, not forwarded | 500, not forwarded | 500, not forwarded |
 
 ## LiteLLM
 

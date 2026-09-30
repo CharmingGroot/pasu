@@ -179,8 +179,8 @@ the request path. Configs: [`integrations/`](../integrations/).
 | pasu | `--frontend ext-proc --listen 0.0.0.0:8791` | `--frontend litellm --listen 127.0.0.1:8790` |
 | gateway side | `envoy.filters.http.ext_proc`, gRPC cluster → pasu | `guardrails:` entry, `api_base` → pasu |
 | must set | request/response body mode `BUFFERED` | `mode: [pre_call, post_call]`, `default_on: true` |
-| never set | `failure_mode_allow: true` | `unreachable_fallback: fail_open` |
-| mind | `message_timeout` above the HITL wait; `per_connection_buffer_limit_bytes` above your largest completion | `pasu_guardrail.PasuGuardrail` if you stream tool calls |
+| never set | `failure_mode_allow: true` (agentgateway: `failureMode: failOpen`) | `unreachable_fallback: fail_open` |
+| mind | `message_timeout` above the HITL wait; `per_connection_buffer_limit_bytes` (agentgateway: `maxBufferSize`, 2 MiB default) above your largest completion | `pasu_guardrail.PasuGuardrail` if you stream tool calls |
 
 In both, pasu being down is a refusal, not a pass — Envoy answers 500, LiteLLM
 refuses the call. pasu itself refuses (500) an Envoy filter configured so that
