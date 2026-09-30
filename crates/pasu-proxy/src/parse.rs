@@ -84,6 +84,90 @@ pub trait WireFormat: Send + Sync {
         value: &mut serde_json::Value,
         f: &mut dyn FnMut(&str) -> Option<String>,
     ) -> Option<()>;
+
+    /// What `method` on `path` (no query) is, to the proxy.
+    ///
+    /// The default treats every path as a completion — the strictest reading:
+    /// the prompt is screened and the response must parse as this format or it
+    /// is refused. A format that knows its API names the rest.
+    fn route(&self, method: &str, path: &str) -> Route {
+        let _ = (method, path);
+        Route::Completion
+    }
+}
+
+/// How the proxy treats an endpoint.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Route {
+    /// A model call: the prompt is screened, and the response must parse as the
+    /// format's response — its tool calls are guarded, and a body that does not
+    /// parse is refused.
+    Completion,
+    /// Carries a prompt but cannot return a tool call (token counting): the
+    /// prompt is screened, the response is not parsed.
+    RequestOnly,
+    /// Neither sends a prompt nor returns a tool call (listing models).
+    Passthrough,
+    /// Not an endpoint this format knows. Refused before it leaves: an unknown
+    /// endpoint is one the proxy cannot guard in either direction.
+    Unknown,
+}
+
+const GET: &str = "GET";
+
+/// `path` is `prefix/<one segment>` — a single resource under a collection.
+fn one_below<'a>(path: &'a str, collection: &str) -> Option<&'a str> {
+    let rest = path.split_once(collection)?.1.strip_prefix('/')?;
+    (!rest.is_empty() && !rest.contains('/')).then_some(rest)
+}
+
+fn is_model_listing(method: &str, path: &str) -> bool {
+    method == GET && (path.ends_with("/models") || one_below(path, "/models").is_some())
+}
+
+fn openai_route(method: &str, path: &str) -> Route {
+    if path.ends_with("/chat/completions") || path.ends_with("/responses") {
+        return Route::Completion;
+    }
+    // Retrieving or cancelling a stored response returns the response itself,
+    // tool calls included.
+    if one_below(path, "/responses").is_some()
+        || path
+            .strip_suffix("/cancel")
+            .is_some_and(|p| one_below(p, "/responses").is_some())
+    {
+        return Route::Completion;
+    }
+    if is_model_listing(method, path) {
+        return Route::Passthrough;
+    }
+    Route::Unknown
+}
+
+fn anthropic_route(method: &str, path: &str) -> Route {
+    if path.ends_with("/messages") {
+        return Route::Completion;
+    }
+    if path.ends_with("/messages/count_tokens") {
+        return Route::RequestOnly;
+    }
+    if is_model_listing(method, path) {
+        return Route::Passthrough;
+    }
+    Route::Unknown
+}
+
+fn gemini_route(method: &str, path: &str) -> Route {
+    if path.ends_with(":generateContent") || path.ends_with(":streamGenerateContent") {
+        return Route::Completion;
+    }
+    if path.ends_with(":countTokens") {
+        return Route::RequestOnly;
+    }
+    if is_model_listing(method, path) {
+        return Route::Passthrough;
+    }
+    Route::Unknown
 }
 
 impl WireFormat for Provider {
@@ -109,6 +193,14 @@ impl WireFormat for Provider {
         f: &mut dyn FnMut(&str) -> Option<String>,
     ) -> Option<()> {
         crate::prompt::visit(value, *self, f)
+    }
+
+    fn route(&self, method: &str, path: &str) -> Route {
+        match self {
+            Provider::OpenAi => openai_route(method, path),
+            Provider::Anthropic => anthropic_route(method, path),
+            Provider::Gemini => gemini_route(method, path),
+        }
     }
 }
 
@@ -430,5 +522,52 @@ mod tests {
     fn a_gemini_prompt_the_provider_refused_has_no_calls() {
         let body = br#"{"promptFeedback":{"blockReason":"SAFETY"}}"#;
         assert_eq!(extract(body, Provider::Gemini), Some(Vec::new()));
+    }
+
+    #[test]
+    fn routes_are_named_per_provider() {
+        let o = Provider::OpenAi;
+        assert_eq!(o.route("POST", "/v1/chat/completions"), Route::Completion);
+        assert_eq!(
+            o.route("POST", "/openai/deployments/d/chat/completions"),
+            Route::Completion
+        );
+        assert_eq!(o.route("POST", "/v1/responses"), Route::Completion);
+        assert_eq!(o.route("GET", "/v1/responses/resp_1"), Route::Completion);
+        assert_eq!(
+            o.route("POST", "/v1/responses/resp_1/cancel"),
+            Route::Completion
+        );
+        assert_eq!(o.route("GET", "/v1/models"), Route::Passthrough);
+        assert_eq!(o.route("POST", "/v1/models"), Route::Unknown);
+        assert_eq!(o.route("POST", "/v1/embeddings"), Route::Unknown);
+        assert_eq!(o.route("POST", "/v1/files"), Route::Unknown);
+
+        let a = Provider::Anthropic;
+        assert_eq!(a.route("POST", "/v1/messages"), Route::Completion);
+        assert_eq!(
+            a.route("POST", "/v1/messages/count_tokens"),
+            Route::RequestOnly
+        );
+        assert_eq!(a.route("POST", "/v1/messages/batches"), Route::Unknown);
+
+        let g = Provider::Gemini;
+        assert_eq!(
+            g.route("POST", "/v1beta/models/g:generateContent"),
+            Route::Completion
+        );
+        assert_eq!(
+            g.route("POST", "/v1beta/models/g:streamGenerateContent"),
+            Route::Completion
+        );
+        assert_eq!(
+            g.route("POST", "/v1beta/models/g:countTokens"),
+            Route::RequestOnly
+        );
+        assert_eq!(g.route("GET", "/v1beta/models"), Route::Passthrough);
+        assert_eq!(
+            g.route("POST", "/v1beta/models/g:embedContent"),
+            Route::Unknown
+        );
     }
 }

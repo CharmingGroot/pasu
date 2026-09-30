@@ -29,6 +29,6 @@ pub mod proxy;
 pub mod stream;
 
 pub use inspect::{inspect, Inspection};
-pub use parse::{extract, Provider, ToolCall};
-pub use proxy::{router, ProxyState};
+pub use parse::{extract, Provider, Route, ToolCall};
+pub use proxy::{router, ProxyOptions, ProxyState};
 pub use stream::extract_stream;

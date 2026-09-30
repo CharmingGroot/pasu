@@ -77,6 +77,32 @@ All notable changes to pasu are documented here. The format follows
   re-serialized before the guard sees them, as Anthropic and Gemini arguments
   already were.
 
+- **The proxy forwards only endpoints it can guard, and refuses what it cannot
+  read.** Every path went upstream, and a completion response that did not parse
+  was relayed unchecked — so a body in a shape the parser did not know carried
+  its tool calls straight to the agent, and `/v1/files` or `/v1/embeddings`
+  carried a prompt past every inspector. `WireFormat::route` now names each
+  endpoint: a completion's response must parse or it is refused; token counting
+  is screened but not parsed; model listing passes; anything else is refused
+  before it leaves, unless the operator names it with `--passthrough-path`,
+  which is announced at every start. With an inspector on, a prompt that cannot
+  be read is refused rather than sent unread, and Responses API prompts
+  (`input`, `instructions`, tool output) are read. Provider errors are relayed
+  with their status and headers instead of being judged. The default `route`
+  treats every path as a completion, so an out-of-tree format gets the strict
+  reading.
+- **The upstream is asked for an uncompressed body.** Client headers went
+  upstream as sent, `Accept-Encoding: gzip` included, and a compressed response
+  is bytes the parser cannot read. The proxy now sends `Accept-Encoding:
+  identity`, drops hop-by-hop headers (including those a `Connection` header
+  lists), and refuses a completion the provider compressed anyway: what was
+  checked must be what the agent decodes.
+- **Both directions are bounded.** axum's 2 MiB request default refused vision
+  payloads and long contexts, and the response was buffered without limit — the
+  read timeout is idle-only, so a stream that kept sending was buffered forever.
+  `--max-request-bytes` (32 MiB) and `--max-response-bytes` (64 MiB) set both; a
+  response over the cap is refused, not truncated.
+
 ### Fixed
 
 - **No binary could print its own help.** `--help` answered `error: unexpected
@@ -92,8 +118,9 @@ All notable changes to pasu are documented here. The format follows
 - **Detection is regex and checksums.** No NER model runs — a path executing per
   message cannot afford one — so PII without a pattern, such as a person's name,
   is not caught.
-- Content inspection sees only request shapes the proxy parses. A body that does
-  not parse is forwarded untouched.
+- Content inspection sees only request shapes the proxy parses. With an
+  inspector on, a body that does not parse is refused; a path named with
+  `--passthrough-path` is forwarded uninspected by the operator's choice.
 
 ## [0.2.0] - 2026-08-26
 
