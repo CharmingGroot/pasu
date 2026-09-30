@@ -1,0 +1,57 @@
+# pasu attached to the Gateway's route as an ext_proc filter.
+apiVersion: gateway.envoyproxy.io/v1alpha1
+kind: EnvoyExtensionPolicy
+metadata:
+  name: pasu
+  namespace: pasu
+spec:
+  # Attach to every route that carries LLM traffic (or to the Gateway).
+  targetRefs:
+  - group: gateway.networking.k8s.io
+    kind: HTTPRoute
+    name: llm
+  extProc:
+  - backendRefs:
+    - name: pasu
+      port: 8791
+    # Both blocks, both Buffered (the measured setup). pasu reads the modes
+    # Envoy reports: BufferedPartial or no response block is a 500 naming the
+    # setting; Streamed / FullDuplexStreamed are held whole (see
+    # integrations/README.md for how a refusal looks in each).
+    # Leaving out processingMode entirely is different: Envoy Gateway then
+    # sends pasu nothing at all, and every request passes unjudged — pasu
+    # cannot refuse a request it is never shown.
+    processingMode:
+      request:
+        body: Buffered   # prompt screening needs the whole body
+      response:
+        body: Buffered   # tool calls are judged before the client sees a byte
+    # Envoy Gateway's default is 200ms. Judging is fast, but with the HITL UI
+    # (--ui) an Ask waits for a person: set this above the approval timeout
+    # (120s), or the wait ends as a 504.
+    messageTimeout: 10s
+    # false is the default: an unreachable pasu is a 500 and the provider is
+    # not called. true lets every request through while pasu is down —
+    # denied tool calls and unguarded endpoints included. Never set it, and
+    # never set shadowMode: true, which sends pasu the traffic but ignores
+    # its answers.
+    failOpen: false
+---
+# Buffered bodies count against the listener's per-connection buffer limit,
+# 32 KiB by default. Over it Envoy refuses — a larger prompt is a 413 before
+# the provider sees it, a larger completion a 500 — which is fail-closed, but
+# an agent's prompt is routinely over 32 KiB. This one policy covers both
+# directions (measured: a 100 KiB prompt and a 256 KiB completion pass with it,
+# 413 and 500 without). 64 MiB is pasu's own response cap.
+apiVersion: gateway.envoyproxy.io/v1alpha1
+kind: ClientTrafficPolicy
+metadata:
+  name: pasu-buffer
+  namespace: pasu
+spec:
+  targetRefs:
+  - group: gateway.networking.k8s.io
+    kind: Gateway
+    name: llm
+  connection:
+    bufferLimit: 64Mi

@@ -52,6 +52,14 @@ All notable changes to pasu are documented here. The format follows
   holds in its default `fullDuplexStreamed` mode now that pasu holds streamed
   bodies whole. A stopped pasu is a 500 under the default
   `failureMode: failClosed`; `failOpen` let a denied tool call through.
+- **Envoy Gateway manifests, measured.** `integrations/envoy-gateway/` attaches
+  pasu with an `EnvoyExtensionPolicy` (both bodies `Buffered`) and a
+  `ClientTrafficPolicy` buffer limit — the 32 KiB default refused a 100 KiB
+  prompt (413) and a 256 KiB completion (500). Verified on Envoy Gateway v1.9.2:
+  a denied tool call, streamed or not, is refused before the client sees a
+  byte; `/v1/embeddings` and an RRN prompt before the provider sees them; an
+  unreachable pasu is a 500. Leaving out `processingMode` sends pasu nothing and lets everything
+  through; the README says so.
 - **The proxy inspects requests, not only responses.** It forwarded every
   request untouched, so a prompt carrying whatever an agent had just read out of
   a file or a database row reached the provider unexamined. The kernel layer

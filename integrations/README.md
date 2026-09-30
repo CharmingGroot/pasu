@@ -7,7 +7,7 @@ through LiteLLM is denied through Envoy and through pasu's own reverse proxy.
 | You run | Attach pasu as | Start pasu with |
 |---|---|---|
 | nothing yet | the reverse proxy (`base_url` → pasu) | `--frontend reverse --upstream <provider>` |
-| [Envoy](envoy/) · Envoy Gateway · [agentgateway](agentgateway/) | an **ext_proc** server | `--frontend ext-proc` |
+| [Envoy](envoy/) · [Envoy Gateway](envoy-gateway/) · [agentgateway](agentgateway/) | an **ext_proc** server | `--frontend ext-proc` |
 | [LiteLLM](litellm/) proxy | a **guardrail** | `--frontend litellm` |
 
 ## What each one covers
@@ -80,8 +80,8 @@ passthrough path, a provider error, a `count_tokens` response, a prompt with
 no inspector on — streams through as it arrives.
 
 pasu asks the upstream for `accept-encoding: identity`, so no decompressor
-filter is needed. Envoy Gateway (`EnvoyExtensionPolicy.extProc`) and
-agentgateway (see [agentgateway](#agentgateway) below) speak the same
+filter is needed. Envoy Gateway ([below](#envoy-gateway)) and agentgateway
+([below](#agentgateway)) speak the same
 protocol. pasu takes the body mode from the `protocol_config` the data plane
 sends; Envoy Gateway's `Streamed` works with the reset described above, so
 prefer `Buffered` there. Behind Envoy AI Gateway, attach pasu
@@ -124,6 +124,68 @@ In full duplex the request headers go upstream before the body is judged, so
 a refused prompt still opens a request at the provider — its path and headers
 arrive, its body never does. Use `buffered` if the provider must not see the
 request at all.
+
+## Envoy Gateway
+
+[`envoy-gateway/`](envoy-gateway/): pasu as a Deployment + Service
+([`pasu.yaml`](envoy-gateway/pasu.yaml)), attached to an HTTPRoute with an
+`EnvoyExtensionPolicy` ([`extension-policy.yaml`](envoy-gateway/extension-policy.yaml)).
+[`gateway.yaml`](envoy-gateway/gateway.yaml) and
+[`mock-provider.yaml`](envoy-gateway/mock-provider.yaml) are the rest of the
+test setup.
+
+```sh
+kubectl apply -f integrations/envoy-gateway/pasu.yaml
+kubectl -n pasu create configmap pasu-rules --from-file=rules.yaml=deploy/rules.yaml
+kubectl apply -f integrations/envoy-gateway/mock-provider.yaml \
+              -f integrations/envoy-gateway/gateway.yaml \
+              -f integrations/envoy-gateway/extension-policy.yaml
+```
+
+The settings that matter:
+
+- `processingMode.request.body` and `processingMode.response.body` both
+  **`Buffered`** (recommended; measured). `BufferedPartial` or a missing
+  `response` block is a 500 that names the setting. `Streamed` and
+  `FullDuplexStreamed` were refused too when this was measured; pasu now holds
+  those whole (verified on Envoy 1.38 and agentgateway, not re-run on Envoy
+  Gateway), with the refusal shapes described under [Envoy](#envoy).
+- **Do not leave out `processingMode`.** Without it Envoy Gateway sends pasu no
+  message at all — every request, denied tool calls and `/v1/embeddings`
+  included, reached the provider unjudged. pasu cannot detect this; it is never
+  called.
+- `failOpen: false` (the default), and no `shadowMode`. With `failOpen: true`
+  and pasu down, everything passed. `shadowMode` sends pasu the traffic and
+  ignores its answers: with it, a denied tool call and `/v1/embeddings` both
+  passed.
+- `messageTimeout` above your slowest judgment — Envoy Gateway's default is
+  200 ms; above the HITL approval timeout (120 s) if you run `--ui`. A timeout
+  is a 504 to the client, not a pass.
+- A `ClientTrafficPolicy` with `connection.bufferLimit` (64 Mi in the example).
+  The 32 KiB default refused a 100 KiB prompt (413, the provider never saw it)
+  and a 256 KiB completion (500). The one policy on the Gateway lifted both; a
+  `BackendTrafficPolicy` was not needed.
+
+Measured with Envoy Gateway **v1.9.2** (Helm chart
+`oci://docker.io/envoyproxy/gateway-helm`) on kind v0.33.0, Kubernetes
+v1.37.0, against the mock provider in plain HTTP:
+
+| Case | Client got | Provider saw |
+|---|---|---|
+| text, non-streamed and streamed | 200 | the request, `accept-encoding: identity` (client sent `gzip`) |
+| `shell` tool call, non-streamed | 403 `pasu_policy_block`, no tool-call bytes | the request |
+| `shell` tool call, streamed | 403 `pasu_policy_block`, no chunk | the request |
+| `POST /v1/embeddings` | 403 | nothing |
+| prompt with an RRN (`--block-pii-kr`) | 403 | nothing |
+| 100 KiB prompt / 256 KiB completion | 200 / 200 | the request |
+| pasu scaled to 0 | 500 | nothing |
+| `response.body` / `request.body: Streamed` | 500 naming the setting — **before** pasu held streamed bodies; see above | nothing |
+| `messageTimeout: 1ms` | 504 | one request of three (the timeout hit a later phase); its answer did not reach the client |
+| `processingMode` left out | **200, tool call delivered** | everything |
+| `failOpen: true`, pasu down | **200, tool call delivered** | everything |
+| `shadowMode: true` (Envoy Gateway rejects it with `Buffered`) | **200, tool call delivered** | everything |
+
+The last three rows are the configurations that fail open; the rest fail closed.
 
 ## LiteLLM
 

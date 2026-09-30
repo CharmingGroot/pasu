@@ -1,0 +1,112 @@
+# A stand-in OpenAI provider, for trying the setup without a real key. Not part
+# of a production install: point the HTTPRoute at your provider instead.
+#
+# POST /v1/chat/completions  text answer; a prompt containing "please call
+#                            shell" answers with a `shell` tool call; "please
+#                            answer long" answers with 256 KiB of text.
+#                            "stream": true answers as SSE.
+# POST /v1/embeddings        answers, so a refusal is visibly pasu's doing.
+#
+# Every request is logged to stdout as one JSON line (path, prompt,
+# accept-encoding): `kubectl logs deploy/mock-provider` shows what reached the
+# provider. A client that accepts gzip gets gzip, as real providers send.
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: mock-provider
+  namespace: pasu
+data:
+  mock.py: |
+    import gzip, json, sys, time
+    from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+
+    def tool_call_message():
+        return {"role": "assistant", "content": None, "tool_calls": [{
+            "id": "call_1", "type": "function",
+            "function": {"name": "shell", "arguments": json.dumps({"cmd": "cat /etc/shadow"})}}]}
+
+    class H(BaseHTTPRequestHandler):
+        protocol_version = "HTTP/1.1"
+
+        def log_message(self, *a):
+            pass
+
+        def send(self, status, body, ctype="application/json"):
+            enc = self.headers.get("accept-encoding", "")
+            if "gzip" in enc:
+                body = gzip.compress(body)
+            self.send_response(status)
+            self.send_header("content-type", ctype)
+            if "gzip" in enc:
+                self.send_header("content-encoding", "gzip")
+            self.send_header("content-length", str(len(body)))
+            self.end_headers()
+            self.wfile.write(body)
+
+        def do_POST(self):
+            raw = self.rfile.read(int(self.headers.get("content-length", 0)))
+            try:
+                req = json.loads(raw or b"{}")
+            except ValueError:
+                req = {}
+            prompt = " ".join(str(m.get("content", "")) for m in req.get("messages", []))
+            print(json.dumps({"path": self.path, "accept_encoding": self.headers.get("accept-encoding"),
+                              "prompt": prompt[:200], "bytes": len(raw)}), flush=True)
+            if self.path == "/v1/embeddings":
+                return self.send(200, json.dumps({"object": "list", "data": [{"embedding": [0.1, 0.2]}]}).encode())
+            if self.path != "/v1/chat/completions":
+                return self.send(404, b'{"error":"not found"}')
+            if "please call shell" in prompt:
+                msg, finish = tool_call_message(), "tool_calls"
+            elif "please answer long" in prompt:
+                msg, finish = {"role": "assistant", "content": "x" * 262144}, "stop"
+            else:
+                msg, finish = {"role": "assistant", "content": "hello from the mock"}, "stop"
+            if not req.get("stream"):
+                return self.send(200, json.dumps({"id": "c1", "object": "chat.completion", "created": int(time.time()),
+                    "model": req.get("model", "mock"), "choices": [{"index": 0, "message": msg, "finish_reason": finish}]}).encode())
+            chunks = []
+            base = {"id": "c1", "object": "chat.completion.chunk", "created": int(time.time()), "model": "mock"}
+            if finish == "tool_calls":
+                tc = msg["tool_calls"][0]
+                chunks.append({"index": 0, "delta": {"role": "assistant", "tool_calls": [{"index": 0, "id": tc["id"],
+                    "type": "function", "function": {"name": "shell", "arguments": ""}}]}, "finish_reason": None})
+                chunks.append({"index": 0, "delta": {"tool_calls": [{"index": 0, "function": {"arguments": tc["function"]["arguments"]}}]}, "finish_reason": None})
+            else:
+                chunks.append({"index": 0, "delta": {"role": "assistant", "content": msg["content"]}, "finish_reason": None})
+            chunks.append({"index": 0, "delta": {}, "finish_reason": finish})
+            body = "".join("data: " + json.dumps(dict(base, choices=[c])) + "\n\n" for c in chunks) + "data: [DONE]\n\n"
+            self.send(200, body.encode(), "text/event-stream")
+
+    ThreadingHTTPServer(("0.0.0.0", 8080), H).serve_forever()
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: mock-provider
+  namespace: pasu
+spec:
+  replicas: 1
+  selector: { matchLabels: { app: mock-provider } }
+  template:
+    metadata: { labels: { app: mock-provider } }
+    spec:
+      containers:
+      - name: mock
+        image: python:3.11-slim
+        imagePullPolicy: IfNotPresent
+        command: ["python", "-u", "/app/mock.py"]
+        ports: [{ containerPort: 8080 }]
+        volumeMounts: [{ name: app, mountPath: /app }]
+      volumes:
+      - name: app
+        configMap: { name: mock-provider }
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: mock-provider
+  namespace: pasu
+spec:
+  selector: { app: mock-provider }
+  ports: [{ name: http, port: 8080, targetPort: 8080 }]

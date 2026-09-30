@@ -1,0 +1,63 @@
+# pasu as an ext_proc server for Envoy Gateway.
+#
+# The policy comes from a ConfigMap built from the same file the kernel layer
+# loads:
+#   kubectl -n pasu create configmap pasu-rules --from-file=rules.yaml=deploy/rules.yaml
+#
+# Image: `docker build -f deploy/proxy/Dockerfile -t pasu-proxy:<tag> .`
+# The image's default command is the reverse proxy; `args` below switch it to
+# the ext_proc front-end.
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: pasu
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: pasu
+  namespace: pasu
+spec:
+  replicas: 1
+  selector: { matchLabels: { app: pasu } }
+  template:
+    metadata: { labels: { app: pasu } }
+    spec:
+      containers:
+      - name: pasu
+        image: pasu-proxy:eg-test
+        imagePullPolicy: IfNotPresent
+        args:
+        - --frontend
+        - ext-proc
+        - --listen
+        - 0.0.0.0:8791
+        - --policy
+        - /etc/pasu/rules.yaml
+        - --block-pii-kr        # refuse prompts carrying Korean PII (RRN etc.)
+        ports: [{ name: grpc, containerPort: 8791 }]
+        readinessProbe:
+          tcpSocket: { port: 8791 }
+          periodSeconds: 2
+        volumeMounts: [{ name: rules, mountPath: /etc/pasu, readOnly: true }]
+        securityContext:
+          runAsNonRoot: true
+          runAsUser: 65532
+          allowPrivilegeEscalation: false
+          readOnlyRootFilesystem: true
+          capabilities: { drop: ["ALL"] }
+      volumes:
+      - name: rules
+        configMap: { name: pasu-rules }
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: pasu
+  namespace: pasu
+spec:
+  selector: { app: pasu }
+  ports:
+  - name: grpc
+    port: 8791
+    targetPort: 8791
