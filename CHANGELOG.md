@@ -43,6 +43,19 @@ All notable changes to pasu are documented here. The format follows
   The placeholder preserves neither length nor shape; a mask that did would leak
   the value it hid. ([#102](https://github.com/CharmingGroot/pasu/issues/102))
 
+### Security
+
+- **The approval UI answers only to whoever started it.** Any process that could
+  reach its port could approve a pending `Ask` with one form post, and ids are
+  sequential. The guarded agent can reach it: the kernel layer always passes
+  loopback, so an allowed shell tool was enough to approve the agent's own
+  calls, and on the dashboard to add an address to the kernel allowlist. Any web
+  page the operator had open could do the same cross-site. Every UI request now
+  needs a token generated at startup; the printed URL carries it once, after
+  which it lives in a `SameSite=Strict`, `HttpOnly` cookie, and a state change
+  whose `Origin` names another host is refused. `pasu_ui::router`, `serve` and
+  `serve_all` take an `Access`; there is no unauthenticated form.
+
 ### Fixed
 
 - **No binary could print its own help.** `--help` answered `error: unexpected

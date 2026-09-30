@@ -283,6 +283,7 @@ async fn main() -> anyhow::Result<()> {
         // HITL: serve the approval UI and route `Ask` through it.
         Some(ui) => {
             let ui_addr: SocketAddr = ui.parse().with_context(|| format!("parse --ui {ui:?}"))?;
+            let access = pasu_ui::Access::generate().context("UI access token")?;
             let approver = UiApprover::new();
             let approvals = approver.state();
             let feed = AuditFeed::new(AUDIT_FEED_CAP);
@@ -297,9 +298,14 @@ async fn main() -> anyhow::Result<()> {
                 inspectors: chosen_inspectors.clone(),
                 redaction: redaction.clone(),
             });
-            eprintln!("pasu-proxy HITL approval UI on http://{ui_addr}");
+            // The token is the only thing standing between the guarded agent
+            // and its own approvals — it reaches loopback. Printed once, here.
+            eprintln!(
+                "pasu-proxy HITL approval UI on {}",
+                access.login_url(ui_addr)
+            );
             tokio::try_join!(serve_proxy(state, &opt.listen), async {
-                pasu_ui::serve(ui_addr, approvals, feed)
+                pasu_ui::serve(ui_addr, approvals, feed, access)
                     .await
                     .context("serve ui")
             })?;
