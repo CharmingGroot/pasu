@@ -22,8 +22,11 @@
 #![forbid(unsafe_code)]
 // 공개 API 문서 누락을 조용히 통과시키지 않는다(crates.io 배포 대상).
 #![warn(missing_docs)]
+#[cfg(feature = "ext-proc")]
+pub mod ext_proc;
 pub mod inspect;
 pub mod judge;
+pub mod litellm;
 pub mod parse;
 pub mod prompt;
 pub mod proxy;

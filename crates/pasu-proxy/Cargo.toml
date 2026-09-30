@@ -22,6 +22,11 @@ pasu-core = { version = "0.2.0", path = "../pasu-core" }
 # to remove these first.
 pasu-inspect-pii-kr = { version = "0.2.0", path = "../pasu-inspect-pii-kr", optional = true }
 pasu-inspect-presidio = { version = "0.2.0", path = "../pasu-inspect-presidio", optional = true }
+# Envoy ext_proc front-end. Pinned: envoy-types 0.7.4 and tonic 0.14.6 raised
+# their MSRV past ours (1.86).
+envoy-types = { version = "=0.7.3", optional = true }
+tonic = { version = "=0.14.5", default-features = false, features = ["transport", "codegen", "router"], optional = true }
+tokio-stream = { version = "0.1", default-features = false, optional = true }
 axum = "0.7"
 reqwest = { version = "0.13", default-features = false, features = ["rustls"] }
 tokio = { workspace = true, features = ["rt-multi-thread", "macros", "net"] }
@@ -39,6 +44,7 @@ anyhow = { workspace = true, default-features = true }
 # but only the tests do, which is why it is here rather than a hard dependency.
 pasu-inspect-pii-kr = { version = "0.2.0", path = "../pasu-inspect-pii-kr" }
 tower = { version = "0.5", features = ["util"] }
+tokio-stream = { version = "0.1", default-features = false, features = ["net"] }
 criterion = { version = "0.5", default-features = false, features = ["cargo_bench_support"] }
 
 [[bench]]
@@ -46,9 +52,12 @@ name = "parse"
 harness = false
 
 [features]
-default = ["pii-kr", "presidio"]
+default = ["pii-kr", "presidio", "ext-proc"]
 # The scanners this repository ships. Both are on by default so the binary is
 # useful out of the box; a library user or a slimmer build turns them off with
 # default-features = false.
 pii-kr = ["dep:pasu-inspect-pii-kr"]
 presidio = ["dep:pasu-inspect-presidio"]
+# Serve Envoy's External Processing protocol (Envoy, Envoy Gateway,
+# agentgateway, GKE service extensions).
+ext-proc = ["dep:envoy-types", "dep:tonic", "dep:tokio-stream"]

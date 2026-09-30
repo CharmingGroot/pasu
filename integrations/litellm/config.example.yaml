@@ -1,0 +1,37 @@
+# LiteLLM proxy config with pasu as a guardrail.
+#
+# pasu side:
+#   pasu-proxy --frontend litellm --listen 127.0.0.1:8790 --policy rules.yaml [--block-pii-kr]
+#
+# Two ways to attach. Pick one per guardrail entry.
+
+model_list:
+  - model_name: gpt-4o
+    litellm_params:
+      model: openai/gpt-4o
+      api_key: os.environ/OPENAI_API_KEY
+
+guardrails:
+  # A. Built-in generic_guardrail_api — nothing to install. Prompts are
+  #    screened (and redacted) before the call; proposed tool calls are judged
+  #    after it. A STREAMED tool call can reach the client before a block.
+  - guardrail_name: pasu
+    litellm_params:
+      guardrail: generic_guardrail_api
+      api_base: http://127.0.0.1:8790
+      mode: [pre_call, post_call]
+      default_on: true
+      # Never fail_open: a guard that is down would pass everything.
+      unreachable_fallback: fail_closed
+      # api_key: os.environ/PASU_GUARDRAIL_API_KEY   # if pasu was started with one
+
+  # B. pasu_guardrail.PasuGuardrail — this directory's pasu_guardrail.py next to
+  #    this file. Same as A, and streamed chat completions are held until
+  #    pasu has judged their tool calls.
+  # - guardrail_name: pasu
+  #   litellm_params:
+  #     guardrail: pasu_guardrail.PasuGuardrail
+  #     api_base: http://127.0.0.1:8790
+  #     mode: [pre_call, post_call]
+  #     default_on: true
+  #     unreachable_fallback: fail_closed
