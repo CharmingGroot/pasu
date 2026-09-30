@@ -12,10 +12,24 @@
 //! | response headers | note status, type, encoding |
 //! | response body | parse the completion and judge its tool calls |
 //!
-//! Every refusal is an `ImmediateResponse`, sent before the client has seen any
-//! of the response. That needs whole bodies: a completion whose body arrives in
-//! pieces (`STREAMED`, or a body mode nobody set) cannot be judged, so it is
-//! refused with a 500 that names the setting, rather than let through.
+//! pasu must see the whole body before any of it reaches the other side, so
+//! a body it judges is held until its last byte, whichever body mode Envoy uses:
+//!
+//! | body mode | while the body arrives | once it is whole |
+//! |---|---|---|
+//! | `BUFFERED` | (one message) | pass it, rewrite it, or refuse |
+//! | `STREAMED` | answer each piece by clearing it, so Envoy forwards nothing | replace the last piece with the whole body, or refuse |
+//! | `FULL_DUPLEX_STREAMED` | answer nothing | send the whole body back, or refuse |
+//!
+//! A refusal is an `ImmediateResponse`. Before the client has seen the
+//! response that is a clean local reply; under `STREAMED` the response headers
+//! have already gone downstream by the time the body is judged, so a refused
+//! completion ends as a reset stream — without any of its bytes. Under
+//! `FULL_DUPLEX_STREAMED` pasu also withholds the response headers' answer, so
+//! the refusal is again a clean local reply. A body that could only be judged
+//! in part (`NONE`, `BUFFERED_PARTIAL`, or a mode nobody reported yet pieces
+//! arrived) is refused with a 500 that names the setting, rather than let
+//! through.
 
 use std::pin::Pin;
 use std::sync::Arc;
@@ -32,7 +46,7 @@ use envoy_types::pb::envoy::service::ext_proc::v3::{
     processing_request::Request as Phase, processing_response::Response as Reply, BodyMutation,
     BodyResponse, CommonResponse, HeaderMutation, HeadersResponse, HttpBody, HttpHeaders,
     ImmediateResponse, ProcessingRequest, ProcessingResponse, ProtocolConfiguration,
-    TrailersResponse,
+    StreamedBodyResponse, TrailersResponse,
 };
 use pasu_core::{Approver, RuleEngine};
 use tokio_stream::{wrappers::ReceiverStream, Stream, StreamExt};
@@ -46,8 +60,16 @@ const STATUS_FORBIDDEN: i32 = 403;
 const STATUS_TOO_LARGE: i32 = 413;
 const STATUS_MISCONFIGURED: i32 = 500;
 
+/// Envoy's recommended ceiling for one full-duplex body response.
+const STREAMED_REPLY_BYTES: usize = 64 * 1024;
+
 const NOT_BUFFERED: &str = "pasu: this completion's body did not arrive whole, so it could not \
-                            be judged. Set the ext_proc processing_mode body modes to BUFFERED";
+                            be judged. Set the ext_proc processing_mode body modes to BUFFERED, \
+                            STREAMED or FULL_DUPLEX_STREAMED";
+const ENDS_IN_TRAILERS: &str = "pasu: a streamed body ended in trailers before it was judged, so \
+                                it was not forwarded";
+const REQUEST_TOO_LARGE: &str = "pasu: the request body exceeds the limit";
+const RESPONSE_TOO_LARGE: &str = "pasu: the response exceeds the limit";
 
 /// The gRPC service. Hand it to [`ExternalProcessorServer::new`].
 pub struct ExtProc<E: RuleEngine, A: Approver> {
@@ -83,13 +105,72 @@ where
             while let Some(Ok(message)) = inbound.next().await {
                 let step = session.handle(&judge, message).await;
                 let last = step.is_final();
-                if tx.send(Ok(step.into_response())).await.is_err() || last {
+                for response in step.into_responses() {
+                    if tx.send(Ok(response)).await.is_err() {
+                        return;
+                    }
+                }
+                if last {
                     break;
                 }
             }
         });
         Ok(tonic::Response::new(Box::pin(ReceiverStream::new(rx))))
     }
+}
+
+/// Which way a body travels.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Direction {
+    Request,
+    Response,
+}
+
+/// How Envoy delivers one direction's body, as far as holding it goes.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Delivery {
+    /// In one message: `BUFFERED`, or a mode Envoy did not report. A piece is
+    /// refused, because nothing says how to hold one back.
+    Whole,
+    /// `STREAMED`: every piece is answered, so a held piece is answered by
+    /// clearing it.
+    Streamed,
+    /// `FULL_DUPLEX_STREAMED`: pieces are answered freely, so a held piece is
+    /// answered by nothing until the body is whole.
+    FullDuplex,
+}
+
+impl Delivery {
+    fn of(mode: i32) -> Self {
+        match BodySendMode::try_from(mode) {
+            Ok(BodySendMode::Streamed) => Self::Streamed,
+            Ok(BodySendMode::FullDuplexStreamed) => Self::FullDuplex,
+            _ => Self::Whole,
+        }
+    }
+}
+
+/// Whether `mode` shows the server every byte of a body before it goes on.
+fn shows_whole_body(mode: i32) -> bool {
+    matches!(
+        BodySendMode::try_from(mode),
+        Ok(BodySendMode::Buffered | BodySendMode::Streamed | BodySendMode::FullDuplexStreamed)
+    )
+}
+
+/// The pieces of a judged body that have arrived and been kept back.
+#[derive(Default)]
+struct Held {
+    bytes: Vec<u8>,
+    pieces: usize,
+}
+
+/// What collecting one piece of a judged body came to.
+enum Gathered {
+    /// Answer with this and wait for more (or stop).
+    Answer(Box<Step>),
+    /// The body is whole. `split` if earlier pieces were held back.
+    Whole { body: Vec<u8>, split: bool },
 }
 
 /// What one HTTP request has shown so far.
@@ -101,12 +182,22 @@ pub struct Session {
     status: u16,
     content_type: Option<String>,
     identity_encoded: bool,
+    request_held: Held,
+    response_held: Held,
+    /// Full duplex: the answer to the response headers, withheld until the
+    /// body is judged so that a refusal can still be a clean local reply.
+    response_headers_answer: Option<ProcessingResponse>,
 }
 
 /// The answer to one phase.
 pub enum Step {
     /// Carry on (possibly with mutations).
     Continue(ProcessingResponse),
+    /// Carry on with several answers, in order: a withheld headers answer and
+    /// a whole body sent back in pieces (full duplex).
+    Release(Vec<ProcessingResponse>),
+    /// Answer nothing yet: pasu is holding this piece until the body is whole.
+    Hold,
     /// Stop this request with a local reply. The stream ends here.
     Refuse(ProcessingResponse),
 }
@@ -116,10 +207,12 @@ impl Step {
         matches!(self, Step::Refuse(_))
     }
 
-    /// The protobuf to send back.
-    pub fn into_response(self) -> ProcessingResponse {
+    /// The protobufs to send back, in order. Empty while holding.
+    pub fn into_responses(self) -> Vec<ProcessingResponse> {
         match self {
-            Step::Continue(r) | Step::Refuse(r) => r,
+            Step::Continue(r) | Step::Refuse(r) => vec![r],
+            Step::Release(rs) => rs,
+            Step::Hold => Vec::new(),
         }
     }
 
@@ -130,7 +223,7 @@ impl Step {
                 Some(Reply::ImmediateResponse(i)) => i.status.as_ref().map(|s| s.code),
                 _ => None,
             },
-            Step::Continue(_) => None,
+            _ => None,
         }
     }
 }
@@ -149,15 +242,21 @@ impl Session {
             Some(Phase::RequestHeaders(h)) => self.request_headers(judge, &h),
             Some(Phase::RequestBody(b)) => self.request_body(judge, b),
             Some(Phase::ResponseHeaders(h)) => self.response_headers(&h),
-            Some(Phase::ResponseBody(b)) => self.response_body(judge, &b).await,
-            Some(Phase::RequestTrailers(_)) => {
-                Step::Continue(reply(Reply::RequestTrailers(TrailersResponse::default())))
-            }
-            Some(Phase::ResponseTrailers(_)) => {
-                Step::Continue(reply(Reply::ResponseTrailers(TrailersResponse::default())))
-            }
+            Some(Phase::ResponseBody(b)) => self.response_body(judge, b).await,
+            Some(Phase::RequestTrailers(_)) => self.trailers(Direction::Request),
+            Some(Phase::ResponseTrailers(_)) => self.trailers(Direction::Response),
             None => refuse(STATUS_MISCONFIGURED, "pasu: an empty ext_proc message"),
         }
+    }
+
+    fn delivery(&self, direction: Direction) -> Delivery {
+        let Some(p) = self.protocol else {
+            return Delivery::Whole;
+        };
+        Delivery::of(match direction {
+            Direction::Request => p.request_body_mode,
+            Direction::Response => p.response_body_mode,
+        })
     }
 
     fn request_headers<E: RuleEngine, A: Approver>(
@@ -190,38 +289,45 @@ impl Session {
                     }),
                 }));
                 // Honoured only with `allow_mode_override`; harmless without.
-                r.mode_override = Some(ProcessingMode {
-                    request_header_mode: HeaderSendMode::Send as i32,
-                    response_header_mode: HeaderSendMode::Send as i32,
-                    request_body_mode: BodySendMode::Buffered as i32,
-                    response_body_mode: if route == Route::Completion {
-                        BodySendMode::Buffered as i32
-                    } else {
-                        BodySendMode::None as i32
-                    },
-                    ..ProcessingMode::default()
-                });
+                // Not sent over a streamed mode: pasu holds those itself, and
+                // would otherwise answer pieces for a mode Envoy stopped using.
+                if self.delivery(Direction::Request) == Delivery::Whole
+                    && self.delivery(Direction::Response) == Delivery::Whole
+                {
+                    r.mode_override = Some(ProcessingMode {
+                        request_header_mode: HeaderSendMode::Send as i32,
+                        response_header_mode: HeaderSendMode::Send as i32,
+                        request_body_mode: BodySendMode::Buffered as i32,
+                        response_body_mode: if route == Route::Completion {
+                            BodySendMode::Buffered as i32
+                        } else {
+                            BodySendMode::None as i32
+                        },
+                        ..ProcessingMode::default()
+                    });
+                }
                 Step::Continue(r)
             }
         }
     }
 
-    /// A filter configured so that a body pasu must judge would never reach it.
-    /// Without this, `response_body_mode: NONE` would let every tool call
-    /// through unseen — the server cannot judge what it is never sent.
+    /// A filter configured so that a body pasu must judge would never reach it
+    /// whole. Without this, `response_body_mode: NONE` would let every tool
+    /// call through unseen — the server cannot judge what it is never sent —
+    /// and `BUFFERED_PARTIAL` would show it only the first part.
     fn misconfigured(&self, route: Route, inspecting: bool) -> Option<&'static str> {
         let p = self.protocol?;
-        let buffered = BodySendMode::Buffered as i32;
-        if route == Route::Completion && p.response_body_mode != buffered {
+        if route == Route::Completion && !shows_whole_body(p.response_body_mode) {
             return Some(
-                "pasu: ext_proc response_body_mode must be BUFFERED, or tool calls in \
-                 completions would never be judged",
+                "pasu: ext_proc response_body_mode must be BUFFERED, STREAMED or \
+                 FULL_DUPLEX_STREAMED, or tool calls in completions would never be judged",
             );
         }
-        if inspecting && p.request_body_mode != buffered {
+        if inspecting && !shows_whole_body(p.request_body_mode) {
             return Some(
-                "pasu: ext_proc request_body_mode must be BUFFERED while an inspector is on, \
-                 or prompts would never be screened",
+                "pasu: ext_proc request_body_mode must be BUFFERED, STREAMED or \
+                 FULL_DUPLEX_STREAMED while an inspector is on, or prompts would never be \
+                 screened",
             );
         }
         None
@@ -238,35 +344,28 @@ impl Session {
                 "pasu: a body arrived before its headers; set request_header_mode to SEND",
             );
         };
-        if route == Route::Passthrough {
-            return Step::Continue(reply(Reply::RequestBody(BodyResponse::default())));
+        let delivery = self.delivery(Direction::Request);
+        // A prompt nothing reads is not held. BUFFERED keeps its checks (no
+        // pieces, the size cap) either way, as it always has.
+        let held = delivery == Delivery::Whole || !judge.inspectors.is_empty();
+        if route == Route::Passthrough || !held {
+            return forward(Direction::Request, delivery, b);
         }
-        if !b.end_of_stream {
-            return refuse(STATUS_MISCONFIGURED, NOT_BUFFERED);
-        }
-        if b.body.len() > judge.options.max_request_bytes {
-            return refuse(STATUS_TOO_LARGE, "pasu: the request body exceeds the limit");
-        }
-        let original = Bytes::from(b.body);
+        let (body, split) = match gather(
+            &mut self.request_held,
+            Direction::Request,
+            delivery,
+            b,
+            judge.options.max_request_bytes,
+            || refuse(STATUS_TOO_LARGE, REQUEST_TOO_LARGE),
+        ) {
+            Gathered::Answer(step) => return *step,
+            Gathered::Whole { body, split } => (body, split),
+        };
+        let original = Bytes::from(body);
         match judge.screen_request(original.clone()) {
             Screened::Refuse(reason) => refuse(STATUS_FORBIDDEN, &reason),
-            Screened::Send(body) if body == original => {
-                Step::Continue(reply(Reply::RequestBody(BodyResponse::default())))
-            }
-            Screened::Send(body) => {
-                // Envoy checks a buffered body against the content-length it
-                // already has; a rewrite must carry the new one.
-                let length = body.len().to_string();
-                Step::Continue(reply(Reply::RequestBody(BodyResponse {
-                    response: Some(CommonResponse {
-                        header_mutation: Some(set_header("content-length", &length)),
-                        body_mutation: Some(BodyMutation {
-                            mutation: Some(Mutation::Body(body.to_vec())),
-                        }),
-                        ..CommonResponse::default()
-                    }),
-                })))
-            }
+            Screened::Send(body) => release(Direction::Request, delivery, &original, &body, split),
         }
     }
 
@@ -277,13 +376,25 @@ impl Session {
         self.content_type = header(h, "content-type");
         self.identity_encoded =
             header(h, "content-encoding").is_none_or(|e| e.trim().eq_ignore_ascii_case("identity"));
-        Step::Continue(reply(Reply::ResponseHeaders(HeadersResponse::default())))
+        let answer = reply(Reply::ResponseHeaders(HeadersResponse::default()));
+        if self.response_judged()
+            && !h.end_of_stream
+            && self.delivery(Direction::Response) == Delivery::FullDuplex
+        {
+            self.response_headers_answer = Some(answer);
+            return Step::Hold;
+        }
+        Step::Continue(answer)
+    }
+
+    fn response_judged(&self) -> bool {
+        self.route == Some(Route::Completion) && (200..300).contains(&self.status)
     }
 
     async fn response_body<E: RuleEngine, A: Approver>(
         &mut self,
         judge: &Judge<E, A>,
-        b: &HttpBody,
+        b: HttpBody,
     ) -> Step {
         let Some(route) = self.route else {
             return refuse(
@@ -291,23 +402,183 @@ impl Session {
                 "pasu: a response arrived for a request whose headers were never sent",
             );
         };
-        let judged = route == Route::Completion && (200..300).contains(&self.status);
-        if judged && !b.end_of_stream {
-            return refuse(STATUS_MISCONFIGURED, NOT_BUFFERED);
+        let delivery = self.delivery(Direction::Response);
+        if !self.response_judged() {
+            if b.body.len() > judge.options.max_response_bytes {
+                return refuse(STATUS_FORBIDDEN, RESPONSE_TOO_LARGE);
+            }
+            return forward(Direction::Response, delivery, b);
         }
-        if b.body.len() > judge.options.max_response_bytes {
-            return refuse(STATUS_FORBIDDEN, "pasu: the response exceeds the limit");
-        }
+        let (body, split) = match gather(
+            &mut self.response_held,
+            Direction::Response,
+            delivery,
+            b,
+            judge.options.max_response_bytes,
+            || refuse(STATUS_FORBIDDEN, RESPONSE_TOO_LARGE),
+        ) {
+            Gathered::Answer(step) => return *step,
+            Gathered::Whole { body, split } => (body, split),
+        };
         let view = ResponseView {
             status: self.status,
             content_type: self.content_type.as_deref(),
             identity_encoded: self.identity_encoded,
-            body: &b.body,
+            body: &body,
         };
-        match judge.judge_response(route, view).await {
-            Ok(()) => Step::Continue(reply(Reply::ResponseBody(BodyResponse::default()))),
-            Err(reason) => refuse(STATUS_FORBIDDEN, &reason),
+        if let Err(reason) = judge.judge_response(route, view).await {
+            return refuse(STATUS_FORBIDDEN, &reason);
         }
+        let released = release(Direction::Response, delivery, &body, &body, split);
+        match self.response_headers_answer.take() {
+            None => released,
+            Some(headers) => {
+                let mut all = vec![headers];
+                all.extend(released.into_responses());
+                Step::Release(all)
+            }
+        }
+    }
+
+    /// Trailers end a body. One still held was never judged, and a streamed
+    /// mode has no way left to send it on — so it is refused, not dropped
+    /// silently or passed.
+    fn trailers(&mut self, direction: Direction) -> Step {
+        let holding = match direction {
+            Direction::Request => self.request_held.pieces > 0,
+            Direction::Response => {
+                self.response_held.pieces > 0 || self.response_headers_answer.is_some()
+            }
+        };
+        if holding {
+            return refuse(STATUS_MISCONFIGURED, ENDS_IN_TRAILERS);
+        }
+        let answer = TrailersResponse::default();
+        Step::Continue(reply(match direction {
+            Direction::Request => Reply::RequestTrailers(answer),
+            Direction::Response => Reply::ResponseTrailers(answer),
+        }))
+    }
+}
+
+/// Keep one piece of a judged body, or hand back the whole of it.
+fn gather(
+    held: &mut Held,
+    direction: Direction,
+    delivery: Delivery,
+    b: HttpBody,
+    limit: usize,
+    too_large: impl FnOnce() -> Step,
+) -> Gathered {
+    if delivery == Delivery::Whole && !b.end_of_stream {
+        return Gathered::Answer(Box::new(refuse(STATUS_MISCONFIGURED, NOT_BUFFERED)));
+    }
+    if held.bytes.len().saturating_add(b.body.len()) > limit {
+        return Gathered::Answer(Box::new(too_large()));
+    }
+    if !b.end_of_stream {
+        held.bytes.extend_from_slice(&b.body);
+        held.pieces += 1;
+        return Gathered::Answer(Box::new(match delivery {
+            Delivery::Streamed => {
+                Step::Continue(body_answer(direction, Some(Mutation::ClearBody(true))))
+            }
+            Delivery::FullDuplex | Delivery::Whole => Step::Hold,
+        }));
+    }
+    let split = held.pieces > 0;
+    let mut body = std::mem::take(&mut held.bytes);
+    body.extend_from_slice(&b.body);
+    Gathered::Whole { body, split }
+}
+
+/// Send a body pasu does not judge on, unchanged.
+fn forward(direction: Direction, delivery: Delivery, b: HttpBody) -> Step {
+    let mutation = match delivery {
+        // Full duplex forwards only what the server sends back.
+        Delivery::FullDuplex => Some(Mutation::StreamedResponse(StreamedBodyResponse {
+            body: b.body,
+            end_of_stream: b.end_of_stream,
+            ..StreamedBodyResponse::default()
+        })),
+        Delivery::Whole | Delivery::Streamed => None,
+    };
+    Step::Continue(body_answer(direction, mutation))
+}
+
+/// Send on a judged body, now whole: `original` as it arrived, `body` as it
+/// is to leave.
+fn release(
+    direction: Direction,
+    delivery: Delivery,
+    original: &[u8],
+    body: &[u8],
+    split: bool,
+) -> Step {
+    match delivery {
+        Delivery::Whole if body == original => Step::Continue(body_answer(direction, None)),
+        Delivery::Whole => {
+            // Envoy checks a buffered body against the content-length it
+            // already has; a rewrite must carry the new one.
+            let mut r = body_answer(direction, Some(Mutation::Body(body.to_vec())));
+            if let Some(common) = body_common(&mut r) {
+                common.header_mutation =
+                    Some(set_header("content-length", &body.len().to_string()));
+            }
+            Step::Continue(r)
+        }
+        // One piece, unchanged: nothing was held back, nothing to put back.
+        Delivery::Streamed if !split && body == original => {
+            Step::Continue(body_answer(direction, None))
+        }
+        // The earlier pieces were cleared; the last one carries them all.
+        Delivery::Streamed => {
+            Step::Continue(body_answer(direction, Some(Mutation::Body(body.to_vec()))))
+        }
+        Delivery::FullDuplex => Step::Release(streamed_out(direction, body)),
+    }
+}
+
+/// A whole body as full-duplex answers, the last one ending the stream.
+fn streamed_out(direction: Direction, body: &[u8]) -> Vec<ProcessingResponse> {
+    let mut pieces: Vec<&[u8]> = body.chunks(STREAMED_REPLY_BYTES).collect();
+    if pieces.is_empty() {
+        pieces.push(&[]);
+    }
+    let last = pieces.len() - 1;
+    pieces
+        .into_iter()
+        .enumerate()
+        .map(|(i, piece)| {
+            body_answer(
+                direction,
+                Some(Mutation::StreamedResponse(StreamedBodyResponse {
+                    body: piece.to_vec(),
+                    end_of_stream: i == last,
+                    ..StreamedBodyResponse::default()
+                })),
+            )
+        })
+        .collect()
+}
+
+fn body_answer(direction: Direction, mutation: Option<Mutation>) -> ProcessingResponse {
+    let answer = BodyResponse {
+        response: mutation.map(|m| CommonResponse {
+            body_mutation: Some(BodyMutation { mutation: Some(m) }),
+            ..CommonResponse::default()
+        }),
+    };
+    reply(match direction {
+        Direction::Request => Reply::RequestBody(answer),
+        Direction::Response => Reply::ResponseBody(answer),
+    })
+}
+
+fn body_common(r: &mut ProcessingResponse) -> Option<&mut CommonResponse> {
+    match &mut r.response {
+        Some(Reply::RequestBody(b) | Reply::ResponseBody(b)) => b.response.as_mut(),
+        _ => None,
     }
 }
 

@@ -8,6 +8,21 @@ All notable changes to pasu are documented here. The format follows
 
 ### Added
 
+- **The ext_proc server accepts `STREAMED` and `FULL_DUPLEX_STREAMED` bodies.**
+  It refused them (500), and agentgateway defaults to full duplex while Envoy
+  Gateway offers `Streamed`. pasu still sees the whole body before any of it
+  goes on: under `STREAMED` each piece is answered by clearing it and the last
+  one carries the whole body; under `FULL_DUPLEX_STREAMED` nothing is answered
+  — the response headers included — until the body is whole, then it goes back
+  in pieces of at most 64 KiB. `max_request_bytes` / `max_response_bytes`
+  bound what is held. A body pasu does not judge streams through untouched.
+  `NONE` and `BUFFERED_PARTIAL` are still refused for a route pasu judges, as
+  is a held body that ends in trailers. Measured with Envoy 1.38: a streamed
+  `shell` tool call is a clean 403 under full duplex and, under `STREAMED`,
+  200 headers followed by a reset — the headers have left before the body is
+  judged — with no tool-call byte reaching the client either way; a Korean RRN
+  split across request pieces reached the provider in neither mode, and
+  `--redact` delivered it redacted.
 - **pasu plugs into Envoy and LiteLLM.** One judge — the same policy, audit
   stream and HITL — now answers three front-ends, chosen with `--frontend`:
   - `reverse` (the default, unchanged): agents point `base_url` at pasu.

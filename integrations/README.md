@@ -33,19 +33,57 @@ already on the wire when the block arrives. Measured with LiteLLM 1.91:
 
 [`envoy/envoy.yaml`](envoy/envoy.yaml). The settings that matter:
 
-- `processing_mode` bodies **BUFFERED**. pasu reads the mode Envoy reports and
-  refuses (500) a completion it would never be shown — with
-  `response_body_mode: NONE` every tool call would otherwise pass unseen.
+- `processing_mode` bodies **BUFFERED**, **STREAMED** or
+  **FULL_DUPLEX_STREAMED**. Whichever it is, pasu holds a body it judges until
+  the last byte and forwards none of it before the verdict. pasu reads the mode
+  Envoy reports and refuses (500) a route whose body it would never see whole:
+  with `response_body_mode: NONE` every tool call would otherwise pass unseen,
+  and `BUFFERED_PARTIAL` shows only the first part.
 - `failure_mode_allow: false` (the default). Never true.
 - `message_timeout` above the HITL approval timeout if you run `--ui`.
 - `per_connection_buffer_limit_bytes` large enough for your prompts and
   completions; over it Envoy refuses (413 / 500).
 
+What a refusal looks like depends on the mode. Measured with Envoy 1.38, a
+streamed (`stream: true`) completion carrying a denied tool call:
+
+| body mode | how pasu holds a body | denied streamed tool call | denied prompt |
+|---|---|---|---|
+| `BUFFERED` | Envoy buffers it | clean 403 | clean 403 |
+| `STREAMED` | answers each piece by clearing it; the last piece carries the whole body | **200 headers, then a reset** — no body byte | clean 403 |
+| `FULL_DUPLEX_STREAMED` | answers nothing, and withholds the response headers, until the body is whole | clean 403 | clean 403 |
+
+Under `STREAMED` the response headers have gone to the client before the body
+is judged, so a refused completion cannot become a 403: Envoy resets the stream
+(curl: `transfer closed with outstanding read data remaining`). No tool-call
+byte reaches the client, so it is still fail-closed — but a client sees a
+broken stream rather than pasu's error. (A non-streamed completion small
+enough to arrive in one piece was still a clean 403 in the same run; do not
+rely on it.) Use `BUFFERED` or
+`FULL_DUPLEX_STREAMED` to get the error. In every held mode the client gets the
+body only once it is whole, as with `BUFFERED`: a streamed completion arrives
+all at once, not token by token.
+
+`FULL_DUPLEX_STREAMED` needs `request_trailer_mode: SEND` and
+`response_trailer_mode: SEND`; Envoy rejects the configuration without them.
+It also has no `message_timeout`, which is what lets pasu hold the response
+headers. A held body that ends in trailers rather than an end-of-stream piece
+is refused (500): LLM APIs do not send trailers. Size limits bound what pasu
+holds: over `max_request_bytes` a prompt is refused (413), over
+`max_response_bytes` a completion (403). A body pasu does not judge — a
+passthrough path, a provider error, a `count_tokens` response, a prompt with
+no inspector on — streams through as it arrives.
+
 pasu asks the upstream for `accept-encoding: identity`, so no decompressor
 filter is needed. Envoy Gateway (`EnvoyExtensionPolicy.extProc`) and
-agentgateway (`spec.traffic.extProc`) speak the same protocol; set their body
-mode to `Buffered` — agentgateway defaults to `FullDuplexStreamed`, which pasu
-refuses rather than judges in pieces. Behind Envoy AI Gateway, attach pasu
+agentgateway (`spec.traffic.extProc`) speak the same protocol. pasu takes the
+body mode from the `protocol_config` the data plane sends, so agentgateway's
+default `FullDuplexStreamed` no longer needs changing — provided agentgateway
+reports it: a data plane that does not gets the `BUFFERED` treatment, and its
+pieces are refused (500) rather than judged. The measurements above are
+Envoy's; agentgateway itself has not been tested. Envoy Gateway's `Streamed`
+works with the reset described above, so prefer `Buffered` there.
+Behind Envoy AI Gateway, attach pasu
 before AI Gateway's own ext_proc if you redact: AI Gateway can rebuild the
 request body and drop an earlier filter's mutation (agent-router#2671).
 
