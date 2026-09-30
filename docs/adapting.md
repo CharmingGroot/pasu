@@ -33,11 +33,14 @@ says so, and the test fixtures are written here.
                               │  Approver   │
                               └─────────────┘
 
-   hosts:  pasu-proxy (LLM API)   pasu-daemon (kernel)   yours
+   hosts:  pasu-proxy (reverse · ext_proc · LiteLLM)   pasu-daemon (kernel)   yours
 ```
 
 A host runs the layers. The proxy and the daemon are two hosts that ship here;
-neither is privileged in the design.
+neither is privileged in the design. Inside the proxy, every decision is made
+by one `Judge`, and the reverse proxy, the Envoy ext_proc server and the
+LiteLLM guardrail endpoint are front-ends that hand it bytes — so a new
+gateway is a new front-end, not a new copy of the rules.
 
 ## What to implement
 
@@ -49,6 +52,7 @@ neither is privileged in the design.
 | send decisions elsewhere | `AuditSink` | `pasu-audit` |
 | ask a human | `Approver` | `pasu-ui` |
 | speak a provider's wire format | `WireFormat` | `Provider` (the built-ins) |
+| carry traffic from a gateway pasu does not speak yet | a front-end over `Judge` | `pasu_proxy::ext_proc`, `pasu_proxy::litellm` |
 
 ### An inspector
 
@@ -66,7 +70,7 @@ Two rules that are not negotiable:
 - **A `Finding` carries no value** — the rule id and the span, never the matched
   text. A message that quotes what it caught is the leak it was meant to stop.
 
-Hand it to `ProxyState.inspectors` and you are done. Nothing in the proxy has to
+Hand it to `Judge.inspectors` and you are done — every front-end uses it. Nothing in the proxy has to
 learn your scanner's name.
 
 ### A wire format
@@ -84,7 +88,7 @@ impl WireFormat for HouseFormat {
 }
 ```
 
-Hand it to `ProxyState.provider` as an `Arc<dyn WireFormat>`. No enum variant,
+Hand it to `Judge.provider` as an `Arc<dyn WireFormat>`. No enum variant,
 no edit inside the proxy, no fork.
 
 `visit_prompt` covers both reading and rewriting deliberately. Two methods that
@@ -95,6 +99,23 @@ scanner would be reading a field the redactor no longer edits.
 way through the proxy — tool-call guarding and request inspection both — written
 the way an outside adapter has to be written, so the seam regressing breaks a
 test rather than someone's fork.
+
+### A front-end
+
+A front-end turns some gateway's protocol into four calls on a `Judge` and acts
+on the answers. It decides nothing itself.
+
+| Judge call | answers | ext_proc phase | LiteLLM hook |
+| --- | --- | --- | --- |
+| `route(method, path)` | may this endpoint be used | request headers | — (LiteLLM routes) |
+| `screen_request(body)` / `screen_texts(texts)` | may this prompt leave, and as what | request body | `pre_call` |
+| `judge_response(route, view)` | may this response's tool calls reach the agent | response body | — |
+| `judge_tool_calls(calls)` | the same, for calls already parsed | — | `post_call` |
+
+Two rules every front-end in this repository keeps, and yours should: a body it
+cannot read is a refusal, not a pass; and a refusal happens before the client
+has received any of the response — which is why ext_proc requires `BUFFERED`
+bodies and the LiteLLM companion class holds streams.
 
 ## Adapters are separate crates on purpose
 

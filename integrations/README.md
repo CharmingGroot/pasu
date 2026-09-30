@@ -23,7 +23,11 @@ through LiteLLM is denied through Envoy and through pasu's own reverse proxy.
 
 Streamed tool calls are the reason `PasuGuardrail` exists: LiteLLM consults a
 guardrail *while* it streams, so with the built-in integration a denied call is
-already on the wire when the block arrives. Measured with LiteLLM 1.91.
+already on the wire when the block arrives. Measured with LiteLLM 1.91:
+
+<p align="center">
+  <img src="../docs/litellm-streaming.svg" width="860" alt="A streamed tool call through LiteLLM. With generic_guardrail_api the client receives the tool_call, arguments and finish chunks, and only after the stream ends is pasu asked; its block arrives as an error event after the call was already on the wire. With PasuGuardrail the same chunks are held, pasu is asked on the assembled response, and the client gets HTTP 400 with no chunk at all">
+</p>
 
 ## Envoy
 

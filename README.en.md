@@ -41,16 +41,17 @@ host, needs **no Kubernetes and no external service**, and applies **three
 layers, one policy**:
 
 <p align="center">
-  <img src="docs/flow.svg" width="760" alt="pasu layered egress defense: one policy drives a cooperative proxy and an enforcing kernel eBPF guard; a rogue egress that bypasses the proxy is still dropped by the kernel, and every decision is recorded for audit">
+  <img src="docs/attach.svg" width="860" alt="One judge, three ways in: agents through the reverse proxy (base_url), Envoy-family gateways through ext_proc, and LiteLLM through its guardrail API all reach the same Judge, which routes the endpoint, screens the prompt and judges tool calls, sharing one policy file, HITL and one audit stream. A tool's own socket that goes around all of them is dropped by the kernel egress allowlist lowered from the same policy">
 </p>
 
 - **① Trace / audit** (`pasu-audit`): every decision is recorded — JSONL to a
   file/SIEM, or OpenTelemetry (OTLP) spans to *your own* stack. Audit evidence
   without anything leaving your network.
-- **② Tool-call guard — cooperative** (`pasu-proxy` LLM-API proxy): point the
-  agent's `base_url` at the proxy; it parses the tool calls in the provider
-  response, gates them, and asks for human-in-the-loop approval when needed.
-  **Framework-agnostic** — any SDK, `base_url` only. Rich context; bypassable
+- **② Tool-call guard — cooperative** (`pasu-proxy`): parses the tool calls in
+  the provider response, gates them, and asks for human-in-the-loop approval
+  when needed. Three ways in: point the agent's `base_url` at pasu, or **plug
+  pasu into the Envoy (ext_proc) or LiteLLM (guardrail) you already run** — the
+  same policy and audit stream either way. **Framework-agnostic**; bypassable
   on its own.
 - **③ Egress enforcement — kernel** (`pasu-egress` / `pasu-ebpf`): default-deny
   cgroup egress in the kernel. Language-agnostic and **unbypassable** — it
@@ -123,34 +124,29 @@ Point your agent's `base_url` at `pasu-proxy`. It forwards to the real provider,
 parses the tool calls the model returns, and blocks any the policy denies
 (fail-closed) before the agent runs them. The tool-call decision rides in the
 provider response, so parsing the provider format covers every SDK — no
-per-framework adapter:
-
-```rust
-use pasu_core::Guard;
-use pasu_proxy::{router, Provider, ProxyState};
-use pasu_rules::RulesetEngine;
-use std::sync::Arc;
-
-let state = Arc::new(ProxyState {
-    guard: Guard::new(RulesetEngine::from_yaml(policy_yaml)?, "llm-proxy"),
-    client: reqwest::Client::new(),
-    upstream_base: "https://api.openai.com".into(),
-    provider: Provider::OpenAi,
-});
-let app = router(state);   // axum Router — serve it, then point the agent's base_url at it
-```
+per-framework adapter.
 
 Supports OpenAI-compatible (Chat Completions and the Responses API), Anthropic,
 and Gemini (the three formats cover effectively every SDK), for both
 non-streaming and streaming (SSE) responses — SSE deltas are reassembled and
 judged by the same policy, with the full stream buffered before relay.
 
-Only endpoints the format names are forwarded. A completion response that does
-not read as that format — an unknown shape, a broken stream, a compressed body —
-is refused, since its tool calls could not be checked, and an unknown path is
-refused before it leaves. Provider errors (4xx/5xx) are relayed with their
-status and headers. `--max-request-bytes` (32 MiB) and `--max-response-bytes`
-(64 MiB) bound both directions.
+A request passes four checks, and a check that cannot confirm its part refuses
+on the spot — the same checks whichever front-end carried it:
+
+<p align="center">
+  <img src="docs/pipeline.svg" width="860" alt="The four checks of one request: 1 route the endpoint (unknown: 403, nothing sent), 2 screen the prompt (a match or an unreadable body: 403, or redacted and sent on), 3 response status and encoding (compressed: 403; 4xx/5xx relayed as is), 4 parse the tool calls and ask the Guard (unreadable or deny: 403; ask: a person). The rows below show where each check runs in the reverse proxy, in Envoy's ext_proc phases, and in LiteLLM's hooks">
+</p>
+
+- **Only endpoints the format names** are forwarded. An unknown path
+  (embeddings, files) is refused before it leaves; `--passthrough-path` forwards
+  one the operator has decided about, uninspected.
+- A completion response that **does not read** as the format — an unknown
+  shape, a broken stream, a compressed body — is refused, since its tool calls
+  could not be checked. Provider errors (4xx/5xx) are relayed with their status
+  and headers.
+- `--max-request-bytes` (32 MiB) and `--max-response-bytes` (64 MiB) bound both
+  directions.
 
 Run the binary with `--ui <addr>` to attach human-in-the-loop approval — a web
 queue (`/`) for pending `Ask` verdicts plus an audit view (`/audit`). Without
@@ -159,14 +155,58 @@ startup, and only a browser that opened it can approve: the kernel layer always
 passes loopback, so without the token the guarded agent could approve its own
 calls.
 
+### Plug into the gateway you already run — Envoy · LiteLLM
+
+If your traffic already goes through Envoy or LiteLLM, plug pasu into it. The
+gateway carries the traffic; pasu decides.
+
+```bash
+# Envoy · Envoy Gateway · agentgateway — as an ext_proc gRPC server
+pasu-proxy --frontend ext-proc --listen 0.0.0.0:8791 --policy rules.yaml
+
+# LiteLLM proxy — as a guardrail (generic_guardrail_api or pasu_guardrail.PasuGuardrail)
+pasu-proxy --frontend litellm --listen 127.0.0.1:8790 --policy rules.yaml
+```
+
+Example configs and a per-front-end coverage table are in
+[`integrations/`](integrations/). Both were verified against the real thing
+(Envoy 1.37, LiteLLM 1.91). Worth knowing:
+
+- **Envoy**: set the body modes to `BUFFERED`. pasu reads the modes Envoy
+  reports and refuses (500) a completion it would never be shown
+  (`response_body_mode: NONE`) — left alone, every tool call would pass unseen.
+  Keep `failure_mode_allow` at its default, false.
+- **LiteLLM**: the built-in `generic_guardrail_api` is consulted while LiteLLM
+  streams, so a denied tool call's chunks reach the client before the block. If
+  you stream, use [`pasu_guardrail.py`](integrations/litellm/pasu_guardrail.py),
+  which holds the stream until pasu has judged it.
+
+Or assemble it as a library:
+
+```rust
+use pasu_core::Guard;
+use pasu_proxy::{router, Judge, Provider, ProxyState};
+use pasu_rules::RulesetEngine;
+use std::sync::Arc;
+
+let state = Arc::new(ProxyState {
+    judge: Judge {
+        guard: Guard::new(RulesetEngine::from_yaml(policy_yaml)?, "llm-proxy"),
+        provider: Arc::new(Provider::OpenAi),
+        inspectors: Vec::new(),
+        redaction: Default::default(),
+        options: Default::default(),
+    },
+    client: reqwest::Client::new(),
+    upstream_base: "https://api.openai.com".into(),
+});
+let app = router(state);   // axum Router — serve it, then point the agent's base_url at it
+```
+
 Deploy it as a sidecar — a slim, **unprivileged** image
 ([`deploy/proxy/Dockerfile`](deploy/proxy/Dockerfile)) and an agent + proxy pod
 ([`deploy/proxy/k8s-sidecar.yaml`](deploy/proxy/k8s-sidecar.yaml), the agent's
 `base_url` → `localhost`).
-
-<p align="center">
-  <img src="docs/sidecar.svg" width="820" alt="pasu-proxy as a sidecar: one pod holds the agent and the unprivileged pasu-proxy; only the agent's base_url changes (localhost). The proxy forwards to the provider, inspects tool calls in responses (deny 403, ask HITL) and writes stderr JSONL audit. On the node, the privileged pasu-egress kernel guard is optional defense-in-depth — a direct socket that bypasses the proxy is dropped in the kernel">
-</p>
 
 The simplest attach: one proxy container, and **one env var** on the agent side:
 
@@ -372,7 +412,9 @@ MVP — the engine, policy, HITL, audit, deployment, and benchmarks are in place
 |---|---|:---:|
 | kernel default-deny allowlist (DNS-aware) | egress/ebpf | ✅ |
 | policy language (YAML) | rules | ✅ |
-| LLM-API proxy — tool-call guard · HITL (any SDK) | proxy | ✅ OpenAI · Anthropic · Gemini · SSE reassembly |
+| LLM-API proxy — tool-call guard · HITL (any SDK) | proxy | ✅ OpenAI (Chat · Responses) · Anthropic · Gemini · SSE reassembly |
+| Envoy ext_proc server (Envoy · Envoy Gateway · agentgateway) | proxy | ✅ verified on Envoy 1.37 |
+| LiteLLM guardrail (`generic_guardrail_api` · `PasuGuardrail`) | proxy | ✅ verified on LiteLLM 1.91 |
 | approval + audit UI | ui | ✅ |
 | audit sinks (JSONL) | audit | ✅ |
 | config-driven daemon + systemd | egress + packaging | ✅ |

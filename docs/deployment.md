@@ -2,9 +2,11 @@
 
 pasu has two layers with very different deployment stories:
 
-- **Cooperative layer** (`pasu-proxy`, `pasu-rules`, `pasu-ui`, `pasu-audit`) — a
-  Rust *library* you link into your agent. It ships in your agent's own
-  container like any other dependency. No special privileges, any OS.
+- **Cooperative layer** (`pasu-proxy`, `pasu-rules`, `pasu-ui`, `pasu-audit`) —
+  one unprivileged process, any OS, in one of three roles: a reverse proxy the
+  agent's `base_url` points at, an ext_proc server beside Envoy, or a guardrail
+  service beside LiteLLM (§6). It is also a Rust library if you would rather
+  link it in.
 - **Enforcing layer** (`pasu-egress` + `pasu-ebpf`) — a kernel eBPF guard. This
   page is about running *that* in a container.
 
@@ -166,6 +168,25 @@ privileged pasu-egress container attaches to the pod's cgroup slice.
 - **systemd slice nesting**: with the systemd cgroup driver, a dash in a slice
   name means nesting — `cgroup_parent: pasu-guarded.slice` lands at
   `/sys/fs/cgroup/pasu.slice/pasu-guarded.slice`, not at the cgroup root.
+
+## 6. Beside a gateway (Envoy · LiteLLM)
+
+When the traffic already crosses a gateway, run pasu next to it instead of in
+the request path. Configs: [`integrations/`](../integrations/).
+
+| | Envoy / Envoy Gateway / agentgateway | LiteLLM |
+|---|---|---|
+| pasu | `--frontend ext-proc --listen 0.0.0.0:8791` | `--frontend litellm --listen 127.0.0.1:8790` |
+| gateway side | `envoy.filters.http.ext_proc`, gRPC cluster → pasu | `guardrails:` entry, `api_base` → pasu |
+| must set | request/response body mode `BUFFERED` | `mode: [pre_call, post_call]`, `default_on: true` |
+| never set | `failure_mode_allow: true` | `unreachable_fallback: fail_open` |
+| mind | `message_timeout` above the HITL wait; `per_connection_buffer_limit_bytes` above your largest completion | `pasu_guardrail.PasuGuardrail` if you stream tool calls |
+
+In both, pasu being down is a refusal, not a pass — Envoy answers 500, LiteLLM
+refuses the call. pasu itself refuses (500) an Envoy filter configured so that
+completions never reach it, rather than run blind. The kernel layer still
+applies underneath: a gateway guards what goes through it, and the kernel what
+does not.
 
 ## Notes
 
