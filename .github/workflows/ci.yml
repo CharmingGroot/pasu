@@ -100,6 +100,28 @@ jobs:
             PASU_E2E_KERNEL=1 \
             cargo test -p pasu-cli --test run_e2e -- --test-threads=1 --nocapture
 
+  envoy-e2e:
+    name: Envoy ext_proc E2E (linux)
+    runs-on: ubuntu-latest
+    env:
+      # 정확한 패치 버전으로 고정한다. v1.37-latest 는 패치 릴리스마다 움직여서,
+      # 이 잡이 깨졌을 때 pasu 가 바뀐 건지 Envoy 가 바뀐 건지 구분할 수 없다.
+      # 수동 검증도 1.37 에서 했다. 올릴 때는 이 한 줄만 바꾼다.
+      ENVOY_IMAGE: envoyproxy/envoy:v1.37.6
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      - name: build pasu-proxy
+        run: cargo build --locked -p pasu-proxy
+      - name: pull Envoy
+        run: docker pull "$ENVOY_IMAGE"
+      # A real Envoy between curl and a mock provider, pasu judging with the
+      # production ruleset (deploy/rules.yaml). On Linux the harness runs Envoy
+      # with --network host, so it reaches pasu and the mock on 127.0.0.1.
+      - name: run E2E (BUFFERED, PII block/redact, NONE misconfig, pasu down)
+        run: tests/e2e/envoy/run.sh target/debug/pasu-proxy "$ENVOY_IMAGE"
+
   msrv:
     name: MSRV (1.86) 빌드
     runs-on: ubuntu-latest
