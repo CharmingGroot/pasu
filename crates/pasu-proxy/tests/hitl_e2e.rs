@@ -17,7 +17,7 @@ use axum::{
     Json, Router,
 };
 use pasu_core::Guard;
-use pasu_proxy::{router, Provider, ProxyState};
+use pasu_proxy::{router, Judge, Provider, ProxyState};
 use pasu_rules::RulesetEngine;
 use pasu_ui::UiApprover;
 use tower::ServiceExt;
@@ -66,17 +66,19 @@ fn proxy_with_ui(upstream_base: String) -> (Router, pasu_ui::AppState) {
     let approver = UiApprover::with_timeout(Duration::from_secs(5));
     let approvals = approver.state();
     let state = Arc::new(ProxyState {
-        guard: Guard::with_approver(
-            RulesetEngine::from_yaml(RULES).expect("ruleset"),
-            approver,
-            "llm-proxy",
-        ),
+        judge: Judge {
+            guard: Guard::with_approver(
+                RulesetEngine::from_yaml(RULES).expect("ruleset"),
+                approver,
+                "llm-proxy",
+            ),
+            provider: Arc::new(Provider::OpenAi),
+            inspectors: Vec::new(),
+            redaction: Default::default(),
+            options: Default::default(),
+        },
         client: reqwest::Client::new(),
         upstream_base,
-        provider: Arc::new(Provider::OpenAi),
-        inspectors: Vec::new(),
-        redaction: Default::default(),
-        options: Default::default(),
     });
     (router(state), approvals)
 }
@@ -162,17 +164,19 @@ async fn ask_without_a_decision_fails_closed() {
     let upstream = spawn_mock_upstream().await;
     let approver = UiApprover::with_timeout(Duration::from_millis(150));
     let state = Arc::new(ProxyState {
-        guard: Guard::with_approver(
-            RulesetEngine::from_yaml(RULES).expect("ruleset"),
-            approver,
-            "llm-proxy",
-        ),
+        judge: Judge {
+            guard: Guard::with_approver(
+                RulesetEngine::from_yaml(RULES).expect("ruleset"),
+                approver,
+                "llm-proxy",
+            ),
+            provider: Arc::new(Provider::OpenAi),
+            inspectors: Vec::new(),
+            redaction: Default::default(),
+            options: Default::default(),
+        },
         client: reqwest::Client::new(),
         upstream_base: upstream,
-        provider: Arc::new(Provider::OpenAi),
-        inspectors: Vec::new(),
-        redaction: Default::default(),
-        options: Default::default(),
     });
 
     let resp = router(state)

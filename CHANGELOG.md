@@ -105,6 +105,10 @@ All notable changes to pasu are documented here. The format follows
 
 ### Fixed
 
+- **A redacted request no longer overwrites text in other messages.** Findings
+  from every message were pooled and each message was redacted with all of
+  them, so a span found in one message replaced the bytes at the same offset in
+  every other. Each text is now redacted with its own findings.
 - **No binary could print its own help.** `--help` answered `error: unexpected
   argument found`. clap's `help` and `usage` are default features and the
   workspace turns defaults off, naming only `std`, so `--help` was not a flag at

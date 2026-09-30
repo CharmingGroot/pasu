@@ -12,7 +12,7 @@ use axum::{
     Json, Router,
 };
 use pasu_core::Guard;
-use pasu_proxy::{router, Provider, ProxyState};
+use pasu_proxy::{router, Judge, Provider, ProxyState};
 use pasu_rules::RulesetEngine;
 use tower::ServiceExt;
 
@@ -120,16 +120,18 @@ fn proxy_app_with(
     redaction: pasu_core::redact::Policy,
 ) -> Router {
     let state = Arc::new(ProxyState {
-        guard: Guard::new(
-            RulesetEngine::from_yaml(RULES).expect("ruleset"),
-            "llm-proxy",
-        ),
+        judge: Judge {
+            guard: Guard::new(
+                RulesetEngine::from_yaml(RULES).expect("ruleset"),
+                "llm-proxy",
+            ),
+            provider: Arc::new(Provider::OpenAi),
+            inspectors,
+            redaction,
+            options: Default::default(),
+        },
         client: reqwest::Client::new(),
         upstream_base,
-        provider: Arc::new(Provider::OpenAi),
-        inspectors,
-        redaction,
-        options: Default::default(),
     });
     router(state)
 }

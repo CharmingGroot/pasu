@@ -19,7 +19,7 @@ use std::time::Duration;
 use anyhow::Context as _;
 use clap::Parser;
 use pasu_core::{Approver, AuditRecord, AuditSink, Guard, RuleEngine};
-use pasu_proxy::{router, Provider, ProxyState};
+use pasu_proxy::{router, Judge, Provider, ProxyState};
 use pasu_rules::RulesetEngine;
 use pasu_ui::{AuditFeed, UiApprover};
 
@@ -320,13 +320,15 @@ async fn main() -> anyhow::Result<()> {
                 Arc::new(TeeSink(vec![Arc::new(StderrAudit), Arc::new(feed.clone())]));
             let guard = Guard::with_approver(engine, approver, "llm-proxy").with_sink(sink);
             let state = Arc::new(ProxyState {
-                guard,
+                judge: Judge {
+                    guard,
+                    provider: Arc::new(provider),
+                    inspectors: chosen_inspectors.clone(),
+                    redaction: redaction.clone(),
+                    options: options.clone(),
+                },
                 client,
                 upstream_base: opt.upstream.clone(),
-                provider: Arc::new(provider),
-                inspectors: chosen_inspectors.clone(),
-                redaction: redaction.clone(),
-                options: options.clone(),
             });
             // The token is the only thing standing between the guarded agent
             // and its own approvals — it reaches loopback. Printed once, here.
@@ -344,13 +346,15 @@ async fn main() -> anyhow::Result<()> {
         None => {
             let guard = Guard::new(engine, "llm-proxy").with_sink(Arc::new(StderrAudit));
             let state = Arc::new(ProxyState {
-                guard,
+                judge: Judge {
+                    guard,
+                    provider: Arc::new(provider),
+                    inspectors: chosen_inspectors.clone(),
+                    redaction: redaction.clone(),
+                    options: options.clone(),
+                },
                 client,
                 upstream_base: opt.upstream.clone(),
-                provider: Arc::new(provider),
-                inspectors: chosen_inspectors.clone(),
-                redaction: redaction.clone(),
-                options: options.clone(),
             });
             serve_proxy(state, &opt.listen).await?;
         }
