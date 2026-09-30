@@ -56,6 +56,27 @@ All notable changes to pasu are documented here. The format follows
   whose `Origin` names another host is refused. `pasu_ui::router`, `serve` and
   `serve_all` take an `Access`; there is no unauthenticated form.
 
+- **Tool calls in the OpenAI Responses API were not guarded at all.** The
+  parser read Chat Completions only, and every field of that shape defaulted, so
+  a Responses body parsed as "a completion with no tool calls". An agent on the
+  Responses API — the default for OpenAI's own agent tooling — ran a
+  `function_call`, `local_shell_call` or `custom_tool_call` under a `default:
+  deny` policy. `output[]` items are now read, streamed and not; any `*_call`
+  item the provider does not execute itself is a tool call, including types
+  newer than this code. The same gap covered the deprecated `function_call`
+  field of Chat Completions and Gemini's `streamGenerateContent` answered as a
+  JSON array; both are read now.
+- **A stream event the parser did not understand was skipped, and a tool call
+  with it.** Several `data:` lines in one event — valid SSE — were read as
+  separate JSON documents and dropped. Events are now framed as the SSE spec
+  frames them, and data that is not JSON, or argument fragments that belong to
+  no named call, make the stream unreadable instead of silently shorter.
+- **OpenAI tool arguments reach the guard decoded.** They arrive as a JSON
+  string the model wrote, escapes included; `\u002fetc` is `/etc` to the agent
+  but not to a rule reading the raw string. Arguments that parse are
+  re-serialized before the guard sees them, as Anthropic and Gemini arguments
+  already were.
+
 ### Fixed
 
 - **No binary could print its own help.** `--help` answered `error: unexpected

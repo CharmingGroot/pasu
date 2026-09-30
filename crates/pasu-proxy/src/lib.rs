@@ -10,7 +10,8 @@
 //! covers every SDK — no per-SDK hook. Intent only; a tool's actual egress is
 //! enforced by the kernel layer (`pasu-egress`).
 //!
-//! Scope today: OpenAI (+ compatible), Anthropic, and Gemini — non-streaming
+//! Scope today: OpenAI Chat Completions and Responses (+ compatible), Anthropic,
+//! and Gemini — non-streaming
 //! bodies and streaming (SSE) bodies alike. The proxy buffers the full response,
 //! so SSE tool calls are reassembled from their deltas and guarded the same way
 //! (no incremental relay).
