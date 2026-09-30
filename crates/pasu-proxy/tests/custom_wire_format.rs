@@ -16,7 +16,7 @@ use axum::{
 };
 use pasu_core::Guard;
 use pasu_proxy::parse::{ToolCall, WireFormat};
-use pasu_proxy::{router, ProxyState};
+use pasu_proxy::{router, Judge, ProxyState};
 use pasu_rules::RulesetEngine;
 use serde_json::Value;
 use tower::ServiceExt;
@@ -90,17 +90,19 @@ async fn upstream_returning(body: Value) -> String {
 
 fn app(upstream: String, inspectors: Vec<Arc<dyn pasu_core::Inspector>>) -> Router {
     let state = Arc::new(ProxyState {
-        guard: Guard::new(
-            RulesetEngine::from_yaml(RULES).expect("ruleset"),
-            "llm-proxy",
-        ),
+        judge: Judge {
+            guard: Guard::new(
+                RulesetEngine::from_yaml(RULES).expect("ruleset"),
+                "llm-proxy",
+            ),
+            // The whole point: a format defined outside this repository.
+            provider: Arc::new(HouseFormat),
+            inspectors,
+            redaction: Default::default(),
+            options: Default::default(),
+        },
         client: reqwest::Client::new(),
         upstream_base: upstream,
-        // The whole point: a format defined outside this repository.
-        provider: Arc::new(HouseFormat),
-        inspectors,
-        redaction: Default::default(),
-        options: Default::default(),
     });
     router(state)
 }

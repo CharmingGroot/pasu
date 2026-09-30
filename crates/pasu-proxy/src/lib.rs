@@ -22,13 +22,18 @@
 #![forbid(unsafe_code)]
 // 공개 API 문서 누락을 조용히 통과시키지 않는다(crates.io 배포 대상).
 #![warn(missing_docs)]
+#[cfg(feature = "ext-proc")]
+pub mod ext_proc;
 pub mod inspect;
+pub mod judge;
+pub mod litellm;
 pub mod parse;
 pub mod prompt;
 pub mod proxy;
 pub mod stream;
 
 pub use inspect::{inspect, Inspection};
+pub use judge::{Judge, ProxyOptions};
 pub use parse::{extract, Provider, Route, ToolCall};
-pub use proxy::{router, ProxyOptions, ProxyState};
+pub use proxy::{router, ProxyState};
 pub use stream::extract_stream;

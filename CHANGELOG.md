@@ -8,6 +8,29 @@ All notable changes to pasu are documented here. The format follows
 
 ### Added
 
+- **pasu plugs into Envoy and LiteLLM.** One judge — the same policy, audit
+  stream and HITL — now answers three front-ends, chosen with `--frontend`:
+  - `reverse` (the default, unchanged): agents point `base_url` at pasu.
+  - `ext-proc`: an Envoy External Processing server, for Envoy, Envoy Gateway,
+    agentgateway and anything else speaking `envoy.service.ext_proc.v3`.
+    Refusals are `ImmediateResponse`s sent before the client sees a byte, which
+    needs `BUFFERED` bodies: pasu reads the body modes Envoy reports and refuses
+    (500) a completion it would never be shown, because with
+    `response_body_mode: NONE` every tool call would pass unseen — verified
+    against Envoy 1.37, where that setting let a denied call through until the
+    check existed. A redacted prompt carries its new `content-length`; the
+    upstream is asked for `identity` encoding.
+  - `litellm`: LiteLLM's Generic Guardrail API. Prompts are screened and
+    redacted (written back by position), proposed tool calls judged; history
+    tool calls on a request are not. LiteLLM streams chunks while it consults a
+    guardrail, so a streamed denied call reached the client before the block —
+    measured with LiteLLM 1.91. `integrations/litellm/pasu_guardrail.py` holds
+    a streamed completion until pasu has judged it; the same measurement then
+    showed no chunk leaving. An optional shared key comes from
+    `PASU_GUARDRAIL_API_KEY`.
+  Examples and a coverage table are in `integrations/`. The `ext-proc` feature
+  (on by default) pins `envoy-types` 0.7.3 and `tonic` 0.14.5, the last releases
+  within the 1.86 MSRV.
 - **The proxy inspects requests, not only responses.** It forwarded every
   request untouched, so a prompt carrying whatever an agent had just read out of
   a file or a database row reached the provider unexamined. The kernel layer
@@ -105,6 +128,10 @@ All notable changes to pasu are documented here. The format follows
 
 ### Fixed
 
+- **A redacted request no longer overwrites text in other messages.** Findings
+  from every message were pooled and each message was redacted with all of
+  them, so a span found in one message replaced the bytes at the same offset in
+  every other. Each text is now redacted with its own findings.
 - **No binary could print its own help.** `--help` answered `error: unexpected
   argument found`. clap's `help` and `usage` are default features and the
   workspace turns defaults off, naming only `std`, so `--help` was not a flag at

@@ -34,11 +34,11 @@ AI 에이전트는 프롬프트 인젝션(prompt injection)에 취약하고, 장
 pasu는 이 제약 안에서 동작하도록 만들었습니다. Linux 호스트 한 대에서 전부 돌아가고, 쿠버네티스도 외부 서비스도 필요 없으며, **정책 하나로 세 계층**을 함께 적용합니다.
 
 <p align="center">
-  <img src="docs/flow.svg" width="760" alt="pasu 계층 egress 방어: 정책 하나가 협조적 프록시와 강제적 커널 eBPF 가드를 구동; 프록시를 우회한 egress도 커널이 drop, 모든 결정은 감사 기록">
+  <img src="docs/attach.svg" width="860" alt="판정기 하나, 들어오는 길 셋: 에이전트는 리버스 프록시로(base_url), Envoy 계열 게이트웨이는 ext_proc로, LiteLLM은 가드레일 API로 같은 Judge에 도달한다. Judge는 경로 분류·프롬프트 검사·도구 호출 판정을 하고, 정책 파일 하나·HITL·감사 스트림을 공유한다. 이 셋을 모두 우회해 도구가 직접 연 소켓은 같은 정책에서 내려온 커널 egress allowlist가 drop한다">
 </p>
 
 - **① 트레이싱 / 감사** (`pasu-audit`) — 모든 판정을 기록합니다. 파일·SIEM으로는 JSONL, 관측 스택으로는 OpenTelemetry(OTLP) 스팬으로. 데이터를 밖으로 내보내지 않고도 감사 증적이 남습니다.
-- **② 도구 호출 가드 (협조적)** (`pasu-proxy` LLM-API 프록시) — 에이전트의 `base_url`을 프록시로 향하게 하면, provider 응답의 도구 호출을 파싱해 검사하고 필요하면 사람이 승인(HITL)합니다. **프레임워크를 가리지 않습니다** — 어떤 SDK든 `base_url`만 바꾸면 됩니다. 도구 이름과 인자까지 보는 계층이지만, 단독으로는 우회될 수 있습니다.
+- **② 도구 호출 가드 (협조적)** (`pasu-proxy`) — provider 응답의 도구 호출을 파싱해 검사하고 필요하면 사람이 승인(HITL)합니다. 붙는 길은 셋입니다: 에이전트의 `base_url`을 pasu로 향하게 하거나, **이미 쓰는 Envoy(ext_proc)나 LiteLLM(가드레일)에 붙이거나**. 어느 길이든 판정은 같은 정책·같은 감사 스트림으로 합니다. **프레임워크를 가리지 않지만**, 단독으로는 우회될 수 있습니다.
 - **③ egress 강제 (커널)** (`pasu-egress` / `pasu-ebpf`) — 커널 cgroup egress를 기본 차단합니다. 언어를 가리지 않고 우회도 불가능해서, ②를 빠져나간 트래픽까지 여기서 최종 차단됩니다.
 
 핵심은 이 강제 계층입니다: 도구가 ②를 우회해 자체 `reqwest`로 나가더라도 커널이 egress를 drop합니다 — 선언된 것만 보는 협조적 가드로는 못 막는 지점입니다.
@@ -100,32 +100,60 @@ sudo pasu run --policy rules.yaml -- npx some-agent "task"  # 언어 무관
 
 에이전트의 `base_url`을 `pasu-proxy`로 향하게 하세요. pasu-proxy는 실제 provider로 요청을 넘기면서 모델이 돌려준 도구 호출을 파싱하고, 정책이 거부한 호출은 에이전트가 실행하기 전에 막습니다(fail-closed). 도구 호출 결정은 provider 응답에 실려 오기 때문에, provider 포맷만 파싱하면 어떤 SDK든 커버됩니다 — 프레임워크별 어댑터가 필요 없습니다.
 
+OpenAI 호환(Chat Completions·Responses API)·Anthropic·Gemini를 지원합니다(세 포맷이 사실상 모든 SDK를 커버). 논스트리밍과 스트리밍(SSE) 응답 모두 검사합니다 — SSE는 delta 조각들을 재조립해 같은 정책으로 판정하며, 전체 스트림을 버퍼링한 뒤 전달합니다.
+
+요청 한 건은 네 번 확인을 거치고, 확인하지 못한 단계는 그 자리에서 거부합니다. 어느 front-end로 들어왔든 같은 단계입니다:
+
+<p align="center">
+  <img src="docs/pipeline.svg" width="860" alt="요청 한 건의 네 단계: ① 경로 분류(모르는 경로는 보내지 않고 403) ② 프롬프트 검사(매치·해석 불가는 403, 또는 마스킹 후 전송) ③ 응답 상태·인코딩(압축은 403, 4xx·5xx는 그대로 전달) ④ 도구 호출 파싱·Guard(해석 불가·deny는 403, ask는 사람에게). 아래 표는 각 단계가 리버스 프록시, Envoy ext_proc 단계, LiteLLM 훅 중 어디에서 실행되는지 보여 준다">
+</p>
+
+- **포맷이 아는 엔드포인트만** 전달합니다. 모르는 경로(embeddings·files 등)는 요청이 나가기 전에 거부하고, 운영자가 `--passthrough-path`로 명시한 경로만 검사 없이 넘깁니다.
+- completion 응답이 그 포맷으로 **읽히지 않으면**(모르는 형태, 깨진 스트림, 압축된 본문) 도구 호출을 확인할 수 없으므로 거부합니다. provider 오류(4xx·5xx)는 상태 코드와 헤더 그대로 전달합니다.
+- 요청·응답 크기는 `--max-request-bytes`(기본 32 MiB)·`--max-response-bytes`(기본 64 MiB)로 제한합니다.
+
+`Ask` 판정에 사람 승인을 붙이려면 바이너리를 `--ui <주소>`로 실행하세요 — 승인 대기열 웹 UI(`/`)와 결정 감사 뷰(`/audit`)가 함께 뜹니다. 미지정 시 `Ask`는 fail-closed로 거부됩니다. UI는 기동할 때 접근 토큰이 담긴 URL을 한 번 출력하며, 그 URL로 연 브라우저만 승인할 수 있습니다 — 커널 계층은 loopback을 항상 통과시키므로 토큰 없이는 감시 대상 에이전트가 자기 요청을 스스로 승인할 수 있기 때문입니다.
+
+### 이미 쓰는 게이트웨이에 붙이기 — Envoy · LiteLLM
+
+트래픽이 이미 Envoy나 LiteLLM을 지난다면 pasu를 그 안에 꽂으면 됩니다. 게이트웨이가 전달하고 pasu가 판정합니다.
+
+```bash
+# Envoy · Envoy Gateway · agentgateway — ext_proc gRPC 서버로
+pasu-proxy --frontend ext-proc --listen 0.0.0.0:8791 --policy rules.yaml
+
+# LiteLLM 프록시 — 가드레일로 (generic_guardrail_api 또는 pasu_guardrail.PasuGuardrail)
+pasu-proxy --frontend litellm --listen 127.0.0.1:8790 --policy rules.yaml
+```
+
+설정 예시와 front-end별 커버리지는 [`integrations/`](integrations/)에 있습니다. 둘 다 실물로 검증했습니다(Envoy 1.37, LiteLLM 1.91). 알아 둘 점:
+
+- **Envoy**: 본문 모드를 `BUFFERED`로 두세요. pasu는 Envoy가 알려 주는 모드를 읽고, completion 본문을 받지 못하게 설정돼 있으면(`response_body_mode: NONE`) 500으로 거부합니다 — 그대로 두면 모든 도구 호출이 판정 없이 지나가기 때문입니다. `failure_mode_allow`는 기본값(false)을 유지하세요.
+- **LiteLLM**: 내장 `generic_guardrail_api`는 스트리밍 중에 가드레일을 부르기 때문에, 거부된 도구 호출 청크가 차단보다 먼저 클라이언트에 닿습니다. 스트리밍을 쓴다면 [`pasu_guardrail.py`](integrations/litellm/pasu_guardrail.py)를 쓰세요 — 스트림을 모아 판정한 뒤에 내보냅니다.
+
+라이브러리로 직접 조립할 수도 있습니다:
+
 ```rust
 use pasu_core::Guard;
-use pasu_proxy::{router, Provider, ProxyState};
+use pasu_proxy::{router, Judge, Provider, ProxyState};
 use pasu_rules::RulesetEngine;
 use std::sync::Arc;
 
 let state = Arc::new(ProxyState {
-    guard: Guard::new(RulesetEngine::from_yaml(policy_yaml)?, "llm-proxy"),
+    judge: Judge {
+        guard: Guard::new(RulesetEngine::from_yaml(policy_yaml)?, "llm-proxy"),
+        provider: Arc::new(Provider::OpenAi),
+        inspectors: Vec::new(),
+        redaction: Default::default(),
+        options: Default::default(),
+    },
     client: reqwest::Client::new(),
     upstream_base: "https://api.openai.com".into(),
-    provider: Provider::OpenAi,
 });
 let app = router(state);   // axum Router — 서빙한 뒤 에이전트 base_url을 여기로
 ```
 
-OpenAI 호환(Chat Completions·Responses API)·Anthropic·Gemini를 지원합니다(세 포맷이 사실상 모든 SDK를 커버). 논스트리밍과 스트리밍(SSE) 응답 모두 검사합니다 — SSE는 delta 조각들을 재조립해 같은 정책으로 판정하며, 전체 스트림을 버퍼링한 뒤 전달합니다.
-
-포맷이 아는 엔드포인트만 전달합니다. completion 응답이 그 포맷으로 읽히지 않으면(모르는 형태, 깨진 스트림, 압축된 본문) 도구 호출을 확인할 수 없으므로 거부하고, 모르는 경로는 요청이 나가기 전에 거부합니다. provider 오류 응답(4xx·5xx)은 상태 코드와 헤더 그대로 전달합니다. 요청·응답 크기는 `--max-request-bytes`(기본 32 MiB)·`--max-response-bytes`(기본 64 MiB)로 제한합니다.
-
-`Ask` 판정에 사람 승인을 붙이려면 바이너리를 `--ui <주소>`로 실행하세요 — 승인 대기열 웹 UI(`/`)와 결정 감사 뷰(`/audit`)가 함께 뜹니다. 미지정 시 `Ask`는 fail-closed로 거부됩니다. UI는 기동할 때 접근 토큰이 담긴 URL을 한 번 출력하며, 그 URL로 연 브라우저만 승인할 수 있습니다 — 커널 계층은 loopback을 항상 통과시키므로 토큰 없이는 감시 대상 에이전트가 자기 요청을 스스로 승인할 수 있기 때문입니다.
-
 사이드카로 배포할 수도 있습니다 — 슬림하고 **권한이 필요 없는** 이미지([`deploy/proxy/Dockerfile`](deploy/proxy/Dockerfile))와 에이전트+프록시를 한 파드에 담은 예시([`deploy/proxy/k8s-sidecar.yaml`](deploy/proxy/k8s-sidecar.yaml), 에이전트 `base_url` → `localhost`).
-
-<p align="center">
-  <img src="docs/sidecar.svg" width="820" alt="pasu-proxy 사이드카 배치: 한 파드에 에이전트와 무권한 pasu-proxy를 두고 base_url만 localhost로 바꾼다. 프록시가 provider로 포워딩하며 응답의 도구 호출을 검사(deny 403 · ask HITL)하고 stderr JSONL 감사를 남긴다. 노드의 pasu-egress(privileged)가 선택적 심층방어로, 프록시를 우회한 직접 소켓 트래픽을 커널에서 drop한다">
-</p>
 
 가장 간단한 부착은 이렇습니다 — 프록시 컨테이너 하나 띄우고, 에이전트 쪽은 **환경변수 하나**만 바꿉니다:
 
@@ -312,7 +340,9 @@ MVP — 엔진, 정책, HITL, 감사, 배포, 벤치마크까지 갖췄습니다
 |---|---|:---:|
 | 커널 기본 차단 allowlist (DNS 인식) | egress/ebpf | ✅ |
 | 정책 언어 (YAML) | rules | ✅ |
-| LLM-API 프록시 — 도구 호출 가드 · HITL (어떤 SDK든) | proxy | ✅ OpenAI · Anthropic · Gemini · SSE 재조립 |
+| LLM-API 프록시 — 도구 호출 가드 · HITL (어떤 SDK든) | proxy | ✅ OpenAI(Chat·Responses) · Anthropic · Gemini · SSE 재조립 |
+| Envoy ext_proc 서버 (Envoy · Envoy Gateway · agentgateway) | proxy | ✅ Envoy 1.37 실물 검증 |
+| LiteLLM 가드레일 (`generic_guardrail_api` · `PasuGuardrail`) | proxy | ✅ LiteLLM 1.91 실물 검증 |
 | 승인 + 감사 UI | ui | ✅ |
 | 감사 sink (JSONL / OTLP) | audit | ✅ |
 | config 기반 daemon + systemd | egress + packaging | ✅ |

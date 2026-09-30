@@ -1,0 +1,103 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 960 380" role="img" aria-label="One request, four checks, whichever front-end carried it. Route the endpoint, screen the prompt, forward with identity encoding, read the response status and encoding, parse and judge the tool calls. Every check that cannot confirm its part refuses before the agent sees a byte. The rows below map each check to the reverse proxy, the Envoy ext_proc phase, and the LiteLLM hook that runs it." font-family="system-ui, -apple-system, 'Segoe UI', sans-serif">
+  <style>
+    .fg { fill: #1d1f23; } .mu { fill: #6a6f78; } .ac { fill: #c2410c; }
+    .box { fill: #ffffff; stroke: #1d1f23; stroke-width: 1.2; }
+    .lane { fill: #f2f3f5; stroke: #c9ccd2; }
+    .deny { fill: #fdeee6; stroke: #c2410c; stroke-width: 1.2; }
+    .ln { stroke: #1d1f23; stroke-width: 1.4; fill: none; }
+    .dl { stroke: #c2410c; stroke-width: 1.6; fill: none; }
+    .grid { stroke: #c9ccd2; stroke-width: 1; }
+    .hd { fill: #1d1f23; } .ha { fill: #c2410c; }
+    @media (prefers-color-scheme: dark) {
+      .fg { fill: #e6e7ea; } .mu { fill: #9aa0aa; } .ac { fill: #ff8a5c; }
+      .box { fill: #1f2227; stroke: #e6e7ea; }
+      .lane { fill: #1b1e22; stroke: #3a3e46; }
+      .deny { fill: #3a241b; stroke: #ff8a5c; }
+      .ln { stroke: #e6e7ea; } .dl { stroke: #ff8a5c; } .grid { stroke: #3a3e46; }
+      .hd { fill: #e6e7ea; } .ha { fill: #ff8a5c; }
+    }
+    text { font-size: 13px; }
+    .t { font-weight: 700; } .s { font-size: 11px; } .m { font-family: ui-monospace, Menlo, monospace; font-size: 10.5px; }
+  </style>
+  <defs>
+    <marker id="a" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path class="hd" d="M0 0 L10 5 L0 10 z"/></marker>
+    <marker id="aa" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path class="ha" d="M0 0 L10 5 L0 10 z"/></marker>
+  </defs>
+
+  <!-- stages: x = 110 + i*170, width 150 -->
+  <rect class="box" x="110" y="30" width="150" height="58" rx="8"/>
+  <text class="fg t" x="185" y="54" text-anchor="middle">① route</text>
+  <text class="mu s" x="185" y="72" text-anchor="middle">endpoint the format names</text>
+
+  <rect class="box" x="280" y="30" width="150" height="58" rx="8"/>
+  <text class="fg t" x="355" y="54" text-anchor="middle">② prompt</text>
+  <text class="mu s" x="355" y="72" text-anchor="middle">inspectors, per message</text>
+
+  <rect class="lane" x="450" y="30" width="150" height="58" rx="8"/>
+  <text class="fg t" x="525" y="54" text-anchor="middle">provider</text>
+  <text class="mu s" x="525" y="72" text-anchor="middle">asked for identity</text>
+
+  <rect class="box" x="620" y="30" width="150" height="58" rx="8"/>
+  <text class="fg t" x="695" y="54" text-anchor="middle">③ response</text>
+  <text class="mu s" x="695" y="72" text-anchor="middle">status · encoding</text>
+
+  <rect class="box" x="790" y="30" width="150" height="58" rx="8"/>
+  <text class="fg t" x="865" y="54" text-anchor="middle">④ tool calls</text>
+  <text class="mu s" x="865" y="72" text-anchor="middle">parse · Guard</text>
+
+  <line class="ln" x1="260" y1="59" x2="278" y2="59" marker-end="url(#a)"/>
+  <line class="ln" x1="430" y1="59" x2="448" y2="59" marker-end="url(#a)"/>
+  <line class="ln" x1="600" y1="59" x2="618" y2="59" marker-end="url(#a)"/>
+  <line class="ln" x1="770" y1="59" x2="788" y2="59" marker-end="url(#a)"/>
+
+  <!-- refusals -->
+  <line class="dl" x1="185" y1="88" x2="185" y2="118" marker-end="url(#aa)"/>
+  <rect class="deny" x="115" y="120" width="140" height="44" rx="6"/>
+  <text class="ac s" x="185" y="138" text-anchor="middle">unknown → 403</text>
+  <text class="ac s" x="185" y="154" text-anchor="middle">nothing sent</text>
+
+  <line class="dl" x1="355" y1="88" x2="355" y2="118" marker-end="url(#aa)"/>
+  <rect class="deny" x="285" y="120" width="140" height="44" rx="6"/>
+  <text class="ac s" x="355" y="138" text-anchor="middle">match · unreadable</text>
+  <text class="ac s" x="355" y="154" text-anchor="middle">→ 403, nothing sent</text>
+
+  <line class="dl" x1="695" y1="88" x2="695" y2="118" marker-end="url(#aa)"/>
+  <rect class="deny" x="625" y="120" width="140" height="44" rx="6"/>
+  <text class="ac s" x="695" y="138" text-anchor="middle">compressed → 403</text>
+  <text class="ac s" x="695" y="154" text-anchor="middle">nothing delivered</text>
+
+  <line class="dl" x1="865" y1="88" x2="865" y2="118" marker-end="url(#aa)"/>
+  <rect class="deny" x="795" y="120" width="140" height="44" rx="6"/>
+  <text class="ac s" x="865" y="138" text-anchor="middle">unreadable · deny → 403</text>
+  <text class="ac s" x="865" y="154" text-anchor="middle">ask → a person</text>
+
+  <text class="mu s" x="355" y="186" text-anchor="middle">or redacted and sent on</text>
+  <text class="mu s" x="695" y="186" text-anchor="middle">4xx · 5xx relayed as is</text>
+
+  <!-- mapping rows -->
+  <line class="grid" x1="20" y1="212" x2="940" y2="212"/>
+  <text class="fg t" x="20" y="240">reverse</text>
+  <text class="mu m" x="185" y="240" text-anchor="middle">path + method</text>
+  <text class="mu m" x="355" y="240" text-anchor="middle">request body</text>
+  <text class="mu m" x="525" y="240" text-anchor="middle">pasu forwards</text>
+  <text class="mu m" x="695" y="240" text-anchor="middle">response headers</text>
+  <text class="mu m" x="865" y="240" text-anchor="middle">buffered body</text>
+
+  <line class="grid" x1="20" y1="256" x2="940" y2="256"/>
+  <text class="fg t" x="20" y="284">Envoy</text>
+  <text class="mu s" x="20" y="300">ext_proc</text>
+  <text class="mu m" x="185" y="284" text-anchor="middle">request_headers</text>
+  <text class="mu m" x="355" y="284" text-anchor="middle">request_body</text>
+  <text class="mu m" x="525" y="284" text-anchor="middle">Envoy forwards</text>
+  <text class="mu m" x="695" y="284" text-anchor="middle">response_headers</text>
+  <text class="mu m" x="865" y="284" text-anchor="middle">response_body</text>
+
+  <line class="grid" x1="20" y1="316" x2="940" y2="316"/>
+  <text class="fg t" x="20" y="344">LiteLLM</text>
+  <text class="mu s" x="20" y="360">guardrail</text>
+  <text class="mu m" x="185" y="344" text-anchor="middle">LiteLLM routes</text>
+  <text class="mu m" x="355" y="344" text-anchor="middle">pre_call · texts</text>
+  <text class="mu m" x="525" y="344" text-anchor="middle">LiteLLM forwards</text>
+  <text class="mu m" x="695" y="344" text-anchor="middle">LiteLLM parses</text>
+  <text class="mu m" x="865" y="344" text-anchor="middle">post_call · tool_calls</text>
+</svg>

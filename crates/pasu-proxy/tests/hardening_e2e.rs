@@ -15,7 +15,7 @@ use axum::{
     Router,
 };
 use pasu_core::Guard;
-use pasu_proxy::{router, Provider, ProxyState};
+use pasu_proxy::{router, Judge, Provider, ProxyState};
 use pasu_rules::RulesetEngine;
 use serde_json::{json, Value};
 use tower::ServiceExt;
@@ -86,16 +86,18 @@ async fn upstream(canned: Canned) -> (String, Arc<std::sync::Mutex<Option<Header
 
 fn proxy(upstream_base: String, provider: Provider) -> Router {
     router(Arc::new(ProxyState {
-        guard: Guard::new(
-            RulesetEngine::from_yaml(PRODUCTION_RULES).expect("production ruleset"),
-            "llm-proxy",
-        ),
+        judge: Judge {
+            guard: Guard::new(
+                RulesetEngine::from_yaml(PRODUCTION_RULES).expect("production ruleset"),
+                "llm-proxy",
+            ),
+            provider: Arc::new(provider),
+            inspectors: Vec::new(),
+            redaction: Default::default(),
+            options: Default::default(),
+        },
         client: reqwest::Client::new(),
         upstream_base,
-        provider: Arc::new(provider),
-        inspectors: Vec::new(),
-        redaction: Default::default(),
-        options: Default::default(),
     }))
 }
 
@@ -377,18 +379,20 @@ async fn a_response_over_the_limit_is_refused_not_buffered_forever() {
     })))
     .await;
     let mut state = ProxyState {
-        guard: Guard::new(
-            RulesetEngine::from_yaml(PRODUCTION_RULES).expect("rules"),
-            "llm-proxy",
-        ),
+        judge: Judge {
+            guard: Guard::new(
+                RulesetEngine::from_yaml(PRODUCTION_RULES).expect("rules"),
+                "llm-proxy",
+            ),
+            provider: Arc::new(Provider::OpenAi),
+            inspectors: Vec::new(),
+            redaction: Default::default(),
+            options: Default::default(),
+        },
         client: reqwest::Client::new(),
         upstream_base: base,
-        provider: Arc::new(Provider::OpenAi),
-        inspectors: Vec::new(),
-        redaction: Default::default(),
-        options: Default::default(),
     };
-    state.options.max_response_bytes = 1024;
+    state.judge.options.max_response_bytes = 1024;
     let resp = router(Arc::new(state))
         .oneshot(chat_request())
         .await
@@ -418,16 +422,18 @@ fn proxy_with(
     f: impl FnOnce(&mut ProxyState<RulesetEngine, pasu_core::DenyAll>),
 ) -> Router {
     let mut state = ProxyState {
-        guard: Guard::new(
-            RulesetEngine::from_yaml(PRODUCTION_RULES).expect("production ruleset"),
-            "llm-proxy",
-        ),
+        judge: Judge {
+            guard: Guard::new(
+                RulesetEngine::from_yaml(PRODUCTION_RULES).expect("production ruleset"),
+                "llm-proxy",
+            ),
+            provider: Arc::new(provider),
+            inspectors: Vec::new(),
+            redaction: Default::default(),
+            options: Default::default(),
+        },
         client: reqwest::Client::new(),
         upstream_base,
-        provider: Arc::new(provider),
-        inspectors: Vec::new(),
-        redaction: Default::default(),
-        options: Default::default(),
     };
     f(&mut state);
     router(Arc::new(state))
@@ -437,7 +443,7 @@ fn proxy_with(
 async fn a_request_over_the_limit_is_refused_before_it_leaves() {
     let (base, seen) = upstream(Canned::json(json!({"choices": []}))).await;
     let app = proxy_with(base, Provider::OpenAi, |s| {
-        s.options.max_request_bytes = 1024
+        s.judge.options.max_request_bytes = 1024
     });
     let req = post(
         "/v1/chat/completions",
@@ -453,7 +459,7 @@ async fn a_request_over_the_limit_is_refused_before_it_leaves() {
 async fn an_unreadable_request_is_refused_when_an_inspector_is_on() {
     let (base, seen) = upstream(Canned::json(json!({"choices": []}))).await;
     let app = proxy_with(base, Provider::OpenAi, |s| {
-        s.inspectors = vec![Arc::new(pasu_inspect_pii_kr::PiiKr::builtin())];
+        s.judge.inspectors = vec![Arc::new(pasu_inspect_pii_kr::PiiKr::builtin())];
     });
     let req = post(
         "/v1/chat/completions",
@@ -473,7 +479,7 @@ async fn an_unreadable_request_is_refused_when_an_inspector_is_on() {
 async fn a_responses_prompt_is_inspected_not_refused() {
     let (base, seen) = upstream(Canned::json(responses_body(json!([])))).await;
     let app = proxy_with(base, Provider::OpenAi, |s| {
-        s.inspectors = vec![Arc::new(pasu_inspect_pii_kr::PiiKr::builtin())];
+        s.judge.inspectors = vec![Arc::new(pasu_inspect_pii_kr::PiiKr::builtin())];
     });
     let resp = app.oneshot(responses_request()).await.expect("proxy");
     assert_eq!(resp.status(), StatusCode::OK);
@@ -484,7 +490,7 @@ async fn a_responses_prompt_is_inspected_not_refused() {
 async fn an_operator_named_path_is_forwarded() {
     let (base, seen) = upstream(Canned::json(json!({"data": []}))).await;
     let app = proxy_with(base, Provider::OpenAi, |s| {
-        s.options.passthrough_paths = vec!["/v1/embeddings".into()];
+        s.judge.options.passthrough_paths = vec!["/v1/embeddings".into()];
     });
     let resp = app
         .oneshot(post("/v1/embeddings", json!({"input": "hi"})))
@@ -535,7 +541,7 @@ async fn an_endless_stream_is_cut_off_at_the_limit() {
         while sock.write_all(chunk.as_bytes()).await.is_ok() {}
     });
     let app = proxy_with(format!("http://{addr}"), Provider::OpenAi, |s| {
-        s.options.max_response_bytes = 64 * 1024;
+        s.judge.options.max_response_bytes = 64 * 1024;
     });
     let resp = tokio::time::timeout(
         std::time::Duration::from_secs(10),

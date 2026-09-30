@@ -1,0 +1,74 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 960 300" role="img" aria-label="A streamed tool call through LiteLLM. With the built-in generic_guardrail_api, chunks reach the client as they arrive and pasu is asked after the stream ends, so the denied tool call is already delivered when the block lands as an error event. With PasuGuardrail, chunks are held, pasu is asked first, and the client gets a 400 with no chunk delivered." font-family="system-ui, -apple-system, 'Segoe UI', sans-serif">
+  <style>
+    .fg { fill: #1d1f23; } .mu { fill: #6a6f78; } .ac { fill: #c2410c; }
+    .chunk { fill: #ffffff; stroke: #1d1f23; stroke-width: 1.1; }
+    .held { fill: none; stroke: #6a6f78; stroke-width: 1.1; stroke-dasharray: 3 3; }
+    .bad { fill: #fdeee6; stroke: #c2410c; stroke-width: 1.6; }
+    .lane { fill: #f2f3f5; stroke: #c9ccd2; }
+    .ln { stroke: #1d1f23; stroke-width: 1.3; fill: none; }
+    .al { stroke: #c2410c; stroke-width: 1.8; fill: none; }
+    .axis { stroke: #c9ccd2; stroke-width: 1; }
+    .hd { fill: #1d1f23; } .ha { fill: #c2410c; }
+    @media (prefers-color-scheme: dark) {
+      .fg { fill: #e6e7ea; } .mu { fill: #9aa0aa; } .ac { fill: #ff8a5c; }
+      .chunk { fill: #1f2227; stroke: #e6e7ea; } .held { stroke: #9aa0aa; }
+      .bad { fill: #3a241b; stroke: #ff8a5c; } .lane { fill: #1b1e22; stroke: #3a3e46; }
+      .ln { stroke: #e6e7ea; } .al { stroke: #ff8a5c; } .axis { stroke: #3a3e46; }
+      .hd { fill: #e6e7ea; } .ha { fill: #ff8a5c; }
+    }
+    text { font-size: 13px; } .t { font-weight: 700; } .s { font-size: 11px; }
+  </style>
+  <defs>
+    <marker id="a" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path class="hd" d="M0 0 L10 5 L0 10 z"/></marker>
+    <marker id="aa" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path class="ha" d="M0 0 L10 5 L0 10 z"/></marker>
+  </defs>
+
+  <text class="mu s" x="230" y="24">time →</text>
+  <line class="axis" x1="230" y1="32" x2="940" y2="32"/>
+
+  <!-- row 1: generic_guardrail_api -->
+  <rect class="lane" x="20" y="48" width="920" height="104" rx="10"/>
+  <text class="fg t" x="36" y="74">generic_guardrail_api</text>
+  <text class="mu s" x="36" y="92">built in</text>
+  <text class="mu s" x="36" y="132">client receives</text>
+
+  <rect class="bad" x="240" y="112" width="92" height="28" rx="5"/>
+  <text class="ac s" x="286" y="130" text-anchor="middle">tool_call: shell</text>
+  <rect class="chunk" x="344" y="112" width="70" height="28" rx="5"/>
+  <text class="fg s" x="379" y="130" text-anchor="middle">arguments</text>
+  <rect class="chunk" x="426" y="112" width="70" height="28" rx="5"/>
+  <text class="fg s" x="461" y="130" text-anchor="middle">finish</text>
+
+  <line class="ln" x1="510" y1="70" x2="620" y2="70" marker-end="url(#a)"/>
+  <text class="mu s" x="565" y="62" text-anchor="middle">stream ends</text>
+  <rect class="chunk" x="622" y="54" width="120" height="32" rx="6"/>
+  <text class="fg s" x="682" y="74" text-anchor="middle">pasu: BLOCKED</text>
+  <line class="al" x1="682" y1="86" x2="682" y2="110" marker-end="url(#aa)"/>
+  <rect class="bad" x="622" y="112" width="120" height="28" rx="5"/>
+  <text class="ac s" x="682" y="130" text-anchor="middle">error event</text>
+  <text class="ac s" x="760" y="122">the call was already</text>
+  <text class="ac s" x="760" y="138">on the wire</text>
+
+  <!-- row 2: PasuGuardrail -->
+  <rect class="lane" x="20" y="172" width="920" height="104" rx="10"/>
+  <text class="fg t" x="36" y="198">PasuGuardrail</text>
+  <text class="mu s" x="36" y="216">integrations/litellm</text>
+  <text class="mu s" x="36" y="256">held by LiteLLM</text>
+
+  <rect class="held" x="240" y="236" width="92" height="28" rx="5"/>
+  <text class="mu s" x="286" y="254" text-anchor="middle">tool_call: shell</text>
+  <rect class="held" x="344" y="236" width="70" height="28" rx="5"/>
+  <text class="mu s" x="379" y="254" text-anchor="middle">arguments</text>
+  <rect class="held" x="426" y="236" width="70" height="28" rx="5"/>
+  <text class="mu s" x="461" y="254" text-anchor="middle">finish</text>
+
+  <line class="ln" x1="510" y1="194" x2="620" y2="194" marker-end="url(#a)"/>
+  <text class="mu s" x="565" y="186" text-anchor="middle">assembled</text>
+  <rect class="chunk" x="622" y="178" width="120" height="32" rx="6"/>
+  <text class="fg s" x="682" y="198" text-anchor="middle">pasu: BLOCKED</text>
+  <line class="ln" x1="682" y1="210" x2="682" y2="234" marker-end="url(#a)"/>
+  <rect class="chunk" x="622" y="236" width="120" height="28" rx="5"/>
+  <text class="fg s" x="682" y="254" text-anchor="middle">HTTP 400</text>
+  <text class="fg s" x="760" y="246">client receives</text>
+  <text class="fg s" x="760" y="262">no chunk at all</text>
+</svg>

@@ -18,10 +18,40 @@ use std::time::Duration;
 
 use anyhow::Context as _;
 use clap::Parser;
-use pasu_core::{Approver, AuditRecord, AuditSink, Guard, RuleEngine};
-use pasu_proxy::{router, Provider, ProxyState};
+use pasu_core::{Approver, AuditRecord, AuditSink, Guard};
+use pasu_proxy::litellm::{guardrail_router, GuardrailState};
+use pasu_proxy::{router, Judge, Provider, ProxyState};
 use pasu_rules::RulesetEngine;
 use pasu_ui::{AuditFeed, UiApprover};
+
+/// The front-ends this binary can serve. All of them answer with the same
+/// [`Judge`]; they differ only in how the bytes arrive.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, clap::ValueEnum)]
+enum Frontend {
+    /// Reverse proxy: forwards to `--upstream`.
+    Reverse,
+    /// LiteLLM Generic Guardrail API (`/beta/litellm_basic_guardrail_api`).
+    Litellm,
+    /// Envoy External Processing (gRPC `envoy.service.ext_proc.v3`).
+    #[cfg(feature = "ext-proc")]
+    ExtProc,
+}
+
+impl Frontend {
+    /// The audit `layer` its decisions are recorded under.
+    fn layer(self) -> &'static str {
+        match self {
+            Frontend::Reverse => "llm-proxy",
+            Frontend::Litellm => "litellm-guardrail",
+            #[cfg(feature = "ext-proc")]
+            Frontend::ExtProc => "envoy-ext-proc",
+        }
+    }
+}
+
+/// The shared key LiteLLM sends as `x-api-key` (its `api_key` setting). Read
+/// from the environment so it never appears in a process listing.
+const GUARDRAIL_API_KEY_ENV: &str = "PASU_GUARDRAIL_API_KEY";
 
 #[derive(Debug, Parser)]
 #[command(about = "LLM-API guard proxy — parses tool calls and blocks denied ones")]
@@ -32,9 +62,16 @@ struct Opt {
     /// Address to listen on. The agent points its `base_url` here.
     #[clap(short, long, default_value = "127.0.0.1:8788")]
     listen: String,
+    /// How traffic reaches pasu. `reverse`: agents point `base_url` here and
+    /// pasu forwards to `--upstream`. `litellm`: LiteLLM's Generic Guardrail
+    /// API. `ext-proc`: Envoy External Processing (gRPC). In the last two the
+    /// gateway forwards and pasu decides. See integrations/.
+    #[clap(long, value_enum, default_value_t = Frontend::Reverse)]
+    frontend: Frontend,
     /// Upstream LLM provider base URL to forward to (e.g. https://api.openai.com).
+    /// Required for `--frontend reverse`.
     #[clap(short, long)]
-    upstream: String,
+    upstream: Option<String>,
     /// Provider wire format of the upstream.
     #[clap(long, default_value = "openai")]
     provider: String,
@@ -265,50 +302,115 @@ fn load_engine(policy: &std::path::Path) -> anyhow::Result<RulesetEngine> {
     RulesetEngine::from_yaml(&yaml).with_context(|| format!("parse policy {}", policy.display()))
 }
 
-/// Bind and serve the reverse proxy until the process exits.
-async fn serve_proxy<E, A>(state: Arc<ProxyState<E, A>>, listen: &str) -> anyhow::Result<()>
-where
-    E: RuleEngine + Send + Sync + 'static,
-    A: Approver + Send + Sync + 'static,
-{
+/// Bind and serve `app` until the process exits.
+async fn serve_router(app: axum::Router, listen: &str) -> anyhow::Result<()> {
     let listener = tokio::net::TcpListener::bind(listen)
         .await
         .with_context(|| format!("bind {listen}"))?;
     eprintln!("pasu-proxy listening on {listen}");
     // 종료 신호를 받으면 처리 중인 요청을 마친 뒤 닫는다. 중간에 끊으면
     // 에이전트가 절단된 응답을 받는다.
-    axum::serve(listener, router(state))
+    axum::serve(listener, app)
         .with_graceful_shutdown(pasu_ui::shutdown::signal())
         .await
         .context("serve")?;
     Ok(())
 }
 
+/// Serve `judge` on the front-end the operator chose.
+async fn serve_frontend<A>(opt: &Opt, judge: Judge<RulesetEngine, A>) -> anyhow::Result<()>
+where
+    A: Approver + Send + Sync + 'static,
+{
+    match opt.frontend {
+        Frontend::Reverse => {
+            let upstream = opt
+                .upstream
+                .clone()
+                .context("--upstream is required with --frontend reverse")?;
+            // 타임아웃이 없으면 응답하지 않는 업스트림이 요청을 무한히 붙잡고,
+            // 커넥션이 쌓여 프록시가 가용성 병목이 된다. 다만 전체(total) 타임아웃은
+            // 긴 생성·스트리밍을 잘라내므로 연결/유휴로 나눠 건다.
+            let client = reqwest::Client::builder()
+                .connect_timeout(Duration::from_secs(opt.connect_timeout_secs))
+                .read_timeout(Duration::from_secs(opt.read_timeout_secs))
+                .build()
+                .context("build upstream HTTP client")?;
+            eprintln!(
+                "pasu-proxy -> upstream {upstream} (provider: {})",
+                opt.provider
+            );
+            let state = Arc::new(ProxyState {
+                judge,
+                client,
+                upstream_base: upstream,
+            });
+            serve_router(router(state), &opt.listen).await
+        }
+        Frontend::Litellm => {
+            let api_key = std::env::var(GUARDRAIL_API_KEY_ENV)
+                .ok()
+                .filter(|k| !k.is_empty());
+            if api_key.is_none() {
+                eprintln!(
+                    "pasu-proxy: {GUARDRAIL_API_KEY_ENV} is not set, so any caller that \
+                     reaches this port can query decisions"
+                );
+            }
+            eprintln!(
+                "pasu-proxy: LiteLLM guardrail API at {}",
+                pasu_proxy::litellm::LITELLM_GUARDRAIL_PATH
+            );
+            let state = Arc::new(GuardrailState { judge, api_key });
+            serve_router(guardrail_router(state), &opt.listen).await
+        }
+        #[cfg(feature = "ext-proc")]
+        Frontend::ExtProc => serve_ext_proc(judge, &opt.listen).await,
+    }
+}
+
+/// Serve the ext_proc gRPC service until the process exits.
+#[cfg(feature = "ext-proc")]
+async fn serve_ext_proc<A>(judge: Judge<RulesetEngine, A>, listen: &str) -> anyhow::Result<()>
+where
+    A: Approver + Send + Sync + 'static,
+{
+    use pasu_proxy::ext_proc::{ExtProc, ExternalProcessorServer};
+    let addr: SocketAddr = listen
+        .parse()
+        .with_context(|| format!("parse --listen {listen:?}"))?;
+    eprintln!("pasu-proxy: Envoy ext_proc (gRPC) listening on {addr}");
+    // Envoy must not fail open: its `failure_mode_allow` default (false) is
+    // what makes an unreachable pasu a refusal rather than a pass.
+    tonic::transport::Server::builder()
+        .add_service(ExternalProcessorServer::new(ExtProc::new(Arc::new(judge))))
+        .serve_with_shutdown(addr, pasu_ui::shutdown::signal())
+        .await
+        .context("serve ext_proc")
+}
+
+/// The front-end's configuration errors, found before anything listens.
+fn check_frontend(opt: &Opt) -> anyhow::Result<()> {
+    if opt.frontend == Frontend::Reverse && opt.upstream.is_none() {
+        anyhow::bail!("--upstream is required with --frontend reverse");
+    }
+    Ok(())
+}
+
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
     let opt = Opt::parse();
-    let provider = parse_provider(&opt.provider)?;
+    check_frontend(&opt)?;
+    let provider: Arc<dyn pasu_proxy::parse::WireFormat> = Arc::new(parse_provider(&opt.provider)?);
     let engine = load_engine(&opt.policy)?;
     // Built once, before anything listens: a rule file that cannot be honoured
     // must stop startup rather than be discovered on the first request.
     let chosen_inspectors = inspectors(&opt)?;
     let redaction = redaction_policy(&opt);
     let options = proxy_options(&opt);
-    // 타임아웃이 없으면 응답하지 않는 업스트림이 요청을 무한히 붙잡고,
-    // 커넥션이 쌓여 프록시가 가용성 병목이 된다. 다만 전체(total) 타임아웃은
-    // 긴 생성·스트리밍을 잘라내므로 연결/유휴로 나눠 건다.
-    let client = reqwest::Client::builder()
-        .connect_timeout(Duration::from_secs(opt.connect_timeout_secs))
-        .read_timeout(Duration::from_secs(opt.read_timeout_secs))
-        .build()
-        .context("build upstream HTTP client")?;
+    let layer = opt.frontend.layer();
 
-    eprintln!(
-        "pasu-proxy -> upstream {} (provider: {})",
-        opt.upstream, opt.provider
-    );
-
-    match opt.ui {
+    match opt.ui.clone() {
         // HITL: serve the approval UI and route `Ask` through it.
         Some(ui) => {
             let ui_addr: SocketAddr = ui.parse().with_context(|| format!("parse --ui {ui:?}"))?;
@@ -318,23 +420,20 @@ async fn main() -> anyhow::Result<()> {
             let feed = AuditFeed::new(AUDIT_FEED_CAP);
             let sink: Arc<dyn AuditSink> =
                 Arc::new(TeeSink(vec![Arc::new(StderrAudit), Arc::new(feed.clone())]));
-            let guard = Guard::with_approver(engine, approver, "llm-proxy").with_sink(sink);
-            let state = Arc::new(ProxyState {
-                guard,
-                client,
-                upstream_base: opt.upstream.clone(),
-                provider: Arc::new(provider),
-                inspectors: chosen_inspectors.clone(),
-                redaction: redaction.clone(),
-                options: options.clone(),
-            });
+            let judge = Judge {
+                guard: Guard::with_approver(engine, approver, layer).with_sink(sink),
+                provider,
+                inspectors: chosen_inspectors,
+                redaction,
+                options,
+            };
             // The token is the only thing standing between the guarded agent
             // and its own approvals — it reaches loopback. Printed once, here.
             eprintln!(
                 "pasu-proxy HITL approval UI on {}",
                 access.login_url(ui_addr)
             );
-            tokio::try_join!(serve_proxy(state, &opt.listen), async {
+            tokio::try_join!(serve_frontend(&opt, judge), async {
                 pasu_ui::serve(ui_addr, approvals, feed, access)
                     .await
                     .context("serve ui")
@@ -342,17 +441,14 @@ async fn main() -> anyhow::Result<()> {
         }
         // No UI: `Ask` fails closed (DenyAll); decisions go to stderr JSONL.
         None => {
-            let guard = Guard::new(engine, "llm-proxy").with_sink(Arc::new(StderrAudit));
-            let state = Arc::new(ProxyState {
-                guard,
-                client,
-                upstream_base: opt.upstream.clone(),
-                provider: Arc::new(provider),
-                inspectors: chosen_inspectors.clone(),
-                redaction: redaction.clone(),
-                options: options.clone(),
-            });
-            serve_proxy(state, &opt.listen).await?;
+            let judge = Judge {
+                guard: Guard::new(engine, layer).with_sink(Arc::new(StderrAudit)),
+                provider,
+                inspectors: chosen_inspectors,
+                redaction,
+                options,
+            };
+            serve_frontend(&opt, judge).await?;
         }
     }
     Ok(())

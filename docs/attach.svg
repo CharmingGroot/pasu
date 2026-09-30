@@ -1,0 +1,113 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 960 460" role="img" aria-label="One judge, three ways in. Agents through the reverse proxy, Envoy-family gateways through ext_proc, and LiteLLM through its guardrail API all reach the same judge, driven by one policy with one audit stream and HITL. Traffic that goes around all of them is dropped by the kernel egress layer, lowered from the same policy." font-family="system-ui, -apple-system, 'Segoe UI', sans-serif">
+  <style>
+    .fg { fill: #1d1f23; } .mu { fill: #6a6f78; } .ac { fill: #c2410c; }
+    .box { fill: #ffffff; stroke: #1d1f23; stroke-width: 1.2; }
+    .lane { fill: #f2f3f5; stroke: #c9ccd2; }
+    .judge { fill: #fdeee6; stroke: #c2410c; stroke-width: 1.6; }
+    .ln { stroke: #1d1f23; stroke-width: 1.4; fill: none; }
+    .dash { stroke: #6a6f78; stroke-width: 1.3; fill: none; stroke-dasharray: 5 4; }
+    .acl { stroke: #c2410c; stroke-width: 2.4; }
+    .hd { fill: #1d1f23; } .hm { fill: #6a6f78; }
+    @media (prefers-color-scheme: dark) {
+      .fg { fill: #e6e7ea; } .mu { fill: #9aa0aa; } .ac { fill: #ff8a5c; }
+      .box { fill: #1f2227; stroke: #e6e7ea; }
+      .lane { fill: #1b1e22; stroke: #3a3e46; }
+      .judge { fill: #3a241b; stroke: #ff8a5c; }
+      .ln { stroke: #e6e7ea; } .dash { stroke: #9aa0aa; } .acl { stroke: #ff8a5c; }
+      .hd { fill: #e6e7ea; } .hm { fill: #9aa0aa; }
+    }
+    text { font-size: 13px; }
+    .t { font-weight: 700; } .s { font-size: 11px; } .m { font-family: ui-monospace, Menlo, monospace; font-size: 11px; }
+  </style>
+  <defs>
+    <marker id="a" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path class="hd" d="M0 0 L10 5 L0 10 z"/></marker>
+    <marker id="am" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path class="hm" d="M0 0 L10 5 L0 10 z"/></marker>
+  </defs>
+
+  <!-- column labels -->
+  <text class="mu s" x="100" y="24" text-anchor="middle">WHO CARRIES THE TRAFFIC</text>
+  <text class="mu s" x="345" y="24" text-anchor="middle">PASU FRONT-END</text>
+  <text class="mu s" x="590" y="24" text-anchor="middle">ONE DECISION</text>
+  <text class="mu s" x="850" y="24" text-anchor="middle">SHARED</text>
+
+  <!-- sources -->
+  <rect class="box" x="20" y="44" width="160" height="56" rx="8"/>
+  <text class="fg t" x="100" y="68" text-anchor="middle">Agent, any SDK</text>
+  <text class="mu s" x="100" y="86" text-anchor="middle">no gateway</text>
+
+  <rect class="box" x="20" y="144" width="160" height="56" rx="8"/>
+  <text class="fg t" x="100" y="166" text-anchor="middle">Envoy</text>
+  <text class="mu s" x="100" y="184" text-anchor="middle">Gateway · agentgateway</text>
+
+  <rect class="box" x="20" y="244" width="160" height="56" rx="8"/>
+  <text class="fg t" x="100" y="268" text-anchor="middle">LiteLLM proxy</text>
+  <text class="mu s" x="100" y="286" text-anchor="middle">guardrails: pasu</text>
+
+  <!-- front-ends -->
+  <rect class="box" x="260" y="44" width="170" height="56" rx="8"/>
+  <text class="fg t" x="345" y="68" text-anchor="middle">reverse proxy</text>
+  <text class="mu m" x="345" y="86" text-anchor="middle">--frontend reverse</text>
+
+  <rect class="box" x="260" y="144" width="170" height="56" rx="8"/>
+  <text class="fg t" x="345" y="168" text-anchor="middle">ext_proc server</text>
+  <text class="mu m" x="345" y="186" text-anchor="middle">--frontend ext-proc</text>
+
+  <rect class="box" x="260" y="244" width="170" height="56" rx="8"/>
+  <text class="fg t" x="345" y="268" text-anchor="middle">guardrail API</text>
+  <text class="mu m" x="345" y="286" text-anchor="middle">--frontend litellm</text>
+
+  <line class="ln" x1="180" y1="72" x2="258" y2="72" marker-end="url(#a)"/>
+  <text class="mu s" x="219" y="64" text-anchor="middle">base_url</text>
+  <line class="ln" x1="180" y1="172" x2="258" y2="172" marker-end="url(#a)"/>
+  <text class="mu s" x="219" y="164" text-anchor="middle">gRPC stream</text>
+  <line class="ln" x1="180" y1="272" x2="258" y2="272" marker-end="url(#a)"/>
+  <text class="mu s" x="219" y="264" text-anchor="middle">pre/post call</text>
+
+  <!-- judge -->
+  <rect class="judge" x="490" y="44" width="200" height="256" rx="10"/>
+  <text class="fg t" x="590" y="70" text-anchor="middle">Judge</text>
+  <text class="fg" x="508" y="102">① route the endpoint</text>
+  <text class="mu s" x="524" y="118">unknown → refused</text>
+  <text class="fg" x="508" y="148">② screen the prompt</text>
+  <text class="mu s" x="524" y="164">block or redact</text>
+  <text class="fg" x="508" y="194">③ judge the tool calls</text>
+  <text class="mu s" x="524" y="210">unreadable → refused</text>
+  <rect class="box" x="506" y="228" width="168" height="54" rx="7"/>
+  <text class="fg t" x="590" y="250" text-anchor="middle">Guard</text>
+  <text class="mu s" x="590" y="268" text-anchor="middle">allow · deny · ask</text>
+
+  <line class="ln" x1="430" y1="72" x2="488" y2="120" marker-end="url(#a)"/>
+  <line class="ln" x1="430" y1="172" x2="488" y2="172" marker-end="url(#a)"/>
+  <line class="ln" x1="430" y1="272" x2="488" y2="224" marker-end="url(#a)"/>
+
+  <!-- shared -->
+  <rect class="box" x="760" y="44" width="180" height="56" rx="8"/>
+  <text class="fg t" x="850" y="68" text-anchor="middle">rules.yaml</text>
+  <text class="mu s" x="850" y="86" text-anchor="middle">one policy</text>
+  <rect class="box" x="760" y="144" width="180" height="56" rx="8"/>
+  <text class="fg t" x="850" y="168" text-anchor="middle">HITL UI</text>
+  <text class="mu s" x="850" y="186" text-anchor="middle">Ask waits for a person</text>
+  <rect class="box" x="760" y="244" width="180" height="56" rx="8"/>
+  <text class="fg t" x="850" y="268" text-anchor="middle">audit</text>
+  <text class="mu s" x="850" y="286" text-anchor="middle">JSONL · OTLP</text>
+
+  <line class="ln" x1="758" y1="72" x2="692" y2="100" marker-end="url(#a)"/>
+  <text class="mu s" x="728" y="76" text-anchor="middle">loads</text>
+  <line class="ln" x1="692" y1="244" x2="758" y2="180" marker-end="url(#a)"/>
+  <text class="mu s" x="736" y="226" text-anchor="middle">Ask</text>
+  <line class="ln" x1="692" y1="262" x2="758" y2="272" marker-end="url(#a)"/>
+  <text class="mu s" x="728" y="300" text-anchor="middle">every verdict</text>
+
+  <!-- kernel -->
+  <rect class="lane" x="20" y="360" width="920" height="80" rx="10"/>
+  <text class="fg t" x="40" y="388">Kernel egress (eBPF, default deny)</text>
+  <text class="mu s" x="40" y="408">the enforcing layer: sees every connect(), whichever path the tool took</text>
+  <line class="dash" x1="100" y1="300" x2="100" y2="382" marker-end="url(#am)"/>
+  <text class="mu s" x="108" y="336">any tool's own socket</text>
+  <line class="acl" x1="92" y1="416" x2="108" y2="432"/>
+  <line class="acl" x1="108" y1="416" x2="92" y2="432"/>
+  <text class="ac s" x="118" y="430">dropped unless allowed</text>
+  <polyline class="dash" points="940,72 952,72 952,318 850,318 850,358" marker-end="url(#am)"/>
+  <text class="mu s" x="842" y="336" text-anchor="end">same policy, lowered</text>
+  <text class="mu s" x="842" y="350" text-anchor="end">to the allowlist</text>
+</svg>

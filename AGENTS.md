@@ -46,7 +46,7 @@ CI is 4 jobs (all must be green): `fmt·clippy·test`, `eBPF build+unit`,
 |-------|------|
 | `pasu-core` | shared `Event`/`Verdict` types + traits (`RuleEngine`, `Layer`, `Approver`, `AuditSink`) + the `Guard` facade |
 | `pasu-rules` | the `RuleEngine` — Falco-inspired YAML ruleset; also lowers policy to the kernel allowlist |
-| `pasu-proxy` | LLM-API reverse proxy: parses tool calls from provider responses (OpenAI/Anthropic/Gemini, streaming + not) |
+| `pasu-proxy` | LLM-API boundary: one `Judge` behind three front-ends — reverse proxy, Envoy ext_proc (`ext-proc` feature), LiteLLM guardrail API; parses tool calls from provider responses (OpenAI Chat/Responses, Anthropic, Gemini; streaming + not) |
 | `pasu-ui` | lightweight web UI: HITL approval, audit, egress dashboard |
 | `pasu-audit` | `AuditSink` backends: JSONL, in-memory, OpenTelemetry (`otel` feature) |
 | `pasu-egress` · `pasu-ebpf` · `pasu-ebpf-common` | kernel eBPF cgroup egress (Linux) |
